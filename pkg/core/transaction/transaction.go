@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 )
 
 const (
@@ -18,6 +19,8 @@ const (
 	BrokerTxType
 	CreateContractTxType
 	CallContractTxType
+	IntentSubmitTxType
+	SettlementTxType
 )
 
 const (
@@ -48,6 +51,7 @@ type Transaction struct {
 
 	RelayTxOpt  // the optional setting only for relay transactions.
 	BrokerTxOpt // the optional setting only for broker transactions.
+	IntentTxOpt // the optional setting only for payment-intent transactions.
 }
 
 type RelayTxOpt struct {
@@ -62,6 +66,10 @@ type BrokerTxOpt struct {
 	OriginalTxCreateTime      time.Time
 	NonceBroker               uint64
 	HeightLock, HeightCurrent uint64
+}
+
+type IntentTxOpt struct {
+	Intent *intent.PaymentIntent `rlp:"nil"`
 }
 
 func NewTransaction(
@@ -101,6 +109,10 @@ func (tx *Transaction) Hash() ([]byte, error) {
 
 // TxType returns the type of a transaction by its variables.
 func (tx *Transaction) TxType() byte {
+	if tx.Intent != nil {
+		return IntentSubmitTxType
+	}
+
 	if len(tx.BOriginalHash) != 0 {
 		return BrokerTxType
 	}
