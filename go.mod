@@ -6,6 +6,7 @@ require (
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/bits-and-blooms/bitset v1.24.4
 	github.com/ethereum/go-ethereum v1.17.1
+	github.com/google/btree v1.1.3
 	github.com/holiman/uint256 v1.3.2
 	github.com/ipfs/go-log/v2 v2.9.1
 	github.com/libp2p/go-libp2p v0.48.0
