@@ -34,7 +34,11 @@ type ConsensusNodeCfg struct {
 }
 
 type NettingCfg struct {
-	Enabled bool `json:"enabled" yaml:"enabled"`
+	Enabled              bool   `json:"enabled"                yaml:"enabled"`
+	BatchSize            int    `json:"batch_size"             yaml:"batch_size"`
+	MaxWindowDurationMS  int64  `json:"max_window_duration_ms" yaml:"max_window_duration_ms"`
+	SolverTickIntervalMS int64  `json:"solver_tick_interval_ms" yaml:"solver_tick_interval_ms"`
+	BatchStorePath       string `json:"batch_store_path"       yaml:"batch_store_path"`
 }
 
 type TxSourceCfg struct {

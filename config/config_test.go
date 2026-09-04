@@ -20,7 +20,11 @@ var expectedSystemCfg = SystemCfg{
 var expectedCfg = Config{
 	GlobalSys: expectedSystemCfg,
 	NettingCfg: NettingCfg{
-		Enabled: true,
+		Enabled:              true,
+		BatchSize:            100,
+		MaxWindowDurationMS:  2000,
+		SolverTickIntervalMS: 100,
+		BatchStorePath:       "./exp_test/netting/solver.db",
 	},
 	ConsensusNodeCfg: ConsensusNodeCfg{
 		BlockchainCfg: BlockchainCfg{
@@ -46,7 +50,11 @@ var expectedCfg = Config{
 			Type: "number",
 		},
 		NettingCfg: NettingCfg{
-			Enabled: true,
+			Enabled:              true,
+			BatchSize:            100,
+			MaxWindowDurationMS:  2000,
+			SolverTickIntervalMS: 100,
+			BatchStorePath:       "./exp_test/netting/solver.db",
 		},
 		BlockInterval:  5000,
 		BlockRecordDir: "./exp_test/block_record/",

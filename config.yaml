@@ -115,6 +115,10 @@ consensus_node:
 netting:
   # Netting nodes and receipt publication are disabled for legacy experiments.
   enabled: false
+  batch_size: 1000
+  max_window_duration_ms: 2000
+  solver_tick_interval_ms: 100
+  batch_store_path: "./exp/netting/solver.db"
 
 supervisor:
   ### -----------------------------------------------------------------------------------
