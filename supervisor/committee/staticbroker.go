@@ -31,6 +31,7 @@ type StaticBrokerCommittee struct {
 	txSource    txsource.TxSource // txSource brings the txs into the blockchain system.
 	sl          stopLogic         // sl is the logic of stop.
 	unsentTxNum int64
+	netting     *nettingWorkload
 
 	cfg config.SupervisorCfg
 
@@ -76,6 +77,7 @@ func NewStaticBrokerCommittee(
 		txSource:          ts,
 		sl:                stopLogic{stopThreshold: cfg.ShardNum * stopThresholdPerShard, stopCnt: 0},
 		unsentTxNum:       cfg.TxNumber,
+		netting:           newNettingWorkload(cfg.NettingCfg.Enabled, cfg.ShardNum, cfg.ChainID),
 		cfg:               cfg,
 		brokerBalances:    brokerBalances,
 		pendingDeductions: pendingDeductions,
@@ -91,6 +93,9 @@ func (s *StaticBrokerCommittee) SendTxsAndConsensus(ctx context.Context) error {
 }
 
 func (s *StaticBrokerCommittee) HandleMsg(ctx context.Context, msg *rpcserver.WrappedMsg) error {
+	if msg.GetMsgType() == message.NettingProgressMessageType {
+		return s.netting.handleProgress(msg)
+	}
 	if msg.GetMsgType() != message.BrokerBlockInfoMessageType {
 		slog.Info("unknown expected msg type", "type", msg.GetMsgType())
 		return nil
@@ -103,7 +108,7 @@ func (s *StaticBrokerCommittee) HandleMsg(ctx context.Context, msg *rpcserver.Wr
 
 	// Only count empty blocks toward stop after all txs are injected.
 	// Otherwise startup empty blocks cause the supervisor to exit before injection.
-	if s.unsentTxNum <= 0 && brokerBlockTxCount(&bInfo) == 0 {
+	if s.unsentTxNum <= 0 && s.netting.finished() && brokerBlockTxCount(&bInfo) == 0 {
 		s.sl.stopCnt++
 	} else if s.unsentTxNum <= 0 {
 		s.sl.stopCnt = 0 // reset 0 if there are transactions in a block
@@ -149,6 +154,21 @@ func (s *StaticBrokerCommittee) readTxsAndSend(ctx context.Context) error {
 	txs, err := s.txSource.ReadTxs(min(s.cfg.TxInjectionSpeed, s.unsentTxNum))
 	if err != nil {
 		return fmt.Errorf("failed to read txs: %w", err)
+	}
+	if s.netting.enabled {
+		converted, convertErr := s.netting.convert(txs)
+		if convertErr != nil {
+			return convertErr
+		}
+		shardTxs := packShardTxs(converted, s.cfg.ShardNum, func(tx transaction.Transaction) int64 {
+			return partition.DefaultAccountLoc(tx.Sender, s.cfg.ShardNum)
+		})
+		if err = message.SendWrappedTxs2Shards(ctx, shardTxs, s.conn, s.r); err != nil {
+			return fmt.Errorf("failed to send netting txs to shards: %w", err)
+		}
+		s.unsentTxNum -= int64(len(txs))
+
+		return nil
 	}
 
 	innerTxs, crossTxs := s.classifyTxs(txs)

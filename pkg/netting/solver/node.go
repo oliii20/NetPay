@@ -28,6 +28,7 @@ var (
 	ErrInvalidConfig       = errors.New("invalid solver configuration")
 	ErrInvalidReceiptNode  = errors.New("receipt is not from shard leader")
 	ErrInvalidReceiptShard = errors.New("receipt has invalid shard")
+	errStopped             = errors.New("solver stopped")
 )
 
 type Config struct {
@@ -49,6 +50,7 @@ type Node struct {
 	pending   []merkle.Hash
 	builder   batch.Builder
 	metrics   *metrics.Publisher
+	stopped   bool
 }
 
 func New(
@@ -94,6 +96,9 @@ func (n *Node) Start(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			if err := n.Step(ctx); err != nil {
+				if errors.Is(err, errStopped) {
+					return nil
+				}
 				slog.ErrorContext(ctx, "solver step failed", "err", err)
 			}
 		}
@@ -105,6 +110,9 @@ func (n *Node) Step(ctx context.Context) error {
 		if err := n.HandleMessage(ctx, wrapped); err != nil {
 			return err
 		}
+	}
+	if n.stopped {
+		return errStopped
 	}
 	if n.manager != nil {
 		n.manager.TryClose()
@@ -118,6 +126,9 @@ func (n *Node) Step(ctx context.Context) error {
 
 func (n *Node) HandleMessage(ctx context.Context, wrapped *rpcserver.WrappedMsg) error {
 	switch wrapped.GetMsgType() {
+	case message.StopConsensusMessageType:
+		n.stopped = true
+		return nil
 	case message.FinalizedBlockReceiptMessageType:
 		var msg message.FinalizedBlockReceiptMsg
 		if err := gob.NewDecoder(bytes.NewReader(wrapped.GetPayload())).Decode(&msg); err != nil {

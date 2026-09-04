@@ -395,6 +395,10 @@ func (c *Chain) initWithGenesisBlock() (*block.Block, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate block err: %w", err)
 	}
+	// Every replica in a shard must start from the same parent hash. A wall-clock
+	// genesis timestamp makes independently started replicas derive different
+	// hashes before PBFT has exchanged its first proposal.
+	b.CreateTime = time.Unix(0, 0).UTC()
 
 	if err = c.AddBlock(ctx, b); err != nil {
 		return nil, fmt.Errorf("failed to add block to storage: %w", err)

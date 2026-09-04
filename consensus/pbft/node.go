@@ -188,19 +188,28 @@ func (n *Node) run() {
 
 		// Fetch messages from buffer to pool.
 		msgList := n.conn.DrainMsgBuffer()
+		preprepareMsgs := make([]*rpcserver.WrappedMsg, 0)
 		for _, msg := range msgList {
+			// A next-round preprepare may arrive in the same drain as the
+			// current round's commit quorum. Apply those commits first so the
+			// proposal is validated against the newly committed chain tip.
+			if msg.GetMsgType() == message.PreprepareMessageType {
+				preprepareMsgs = append(preprepareMsgs, msg)
+				continue
+			}
 			err := n.handleMessage(ctx, msg)
 			if err != nil {
 				slog.ErrorContext(ctx, "handleMessage failed", "err", err)
 			}
 		}
 
-		// Update PBFT process.
-		n.pbftMeta.curateMsg()
-
-		// Try to step into the next process.
-		if err := n.step2NextStage(ctx); err != nil {
-			slog.ErrorContext(ctx, "step2NextStage failed", "err", err)
+		n.advanceConsensus(ctx)
+		for _, msg := range preprepareMsgs {
+			if err := n.handleMessage(ctx, msg); err != nil {
+				slog.ErrorContext(ctx, "handleMessage failed", "err", err)
+				continue
+			}
+			n.advanceConsensus(ctx)
 		}
 
 		if n.pbftMeta.lp.NodeID == n.pbftMeta.leader {
@@ -219,6 +228,13 @@ func (n *Node) run() {
 	}
 
 	n.closeAll()
+}
+
+func (n *Node) advanceConsensus(ctx context.Context) {
+	n.pbftMeta.curateMsg()
+	if err := n.step2NextStage(ctx); err != nil {
+		slog.ErrorContext(ctx, "step2NextStage failed", "err", err)
+	}
 }
 
 // registerHandleFunc registers all message handle functions.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
@@ -40,6 +41,9 @@ func (p *Publisher) PublishAfterBlock(ctx context.Context, committed *block.Bloc
 	if err := p.publishCompletions(ctx, committed); err != nil {
 		return err
 	}
+	if err := p.publishProgress(ctx, committed); err != nil {
+		return err
+	}
 	items, err := p.chain.GetPendingFallbacks(ctx)
 	if err != nil {
 		return err
@@ -55,6 +59,39 @@ func (p *Publisher) PublishAfterBlock(ctx context.Context, committed *block.Bloc
 		}
 		p.conn.SendMsg2Dest(ctx, destination, wrapped)
 	}
+
+	return nil
+}
+
+func (p *Publisher) publishProgress(ctx context.Context, committed *block.Block) error {
+	completed := make([]intent.ID, 0)
+	for idx := range committed.TxList {
+		tx := &committed.TxList[idx]
+		if tx.ReservedFallback != nil {
+			completed = append(completed, tx.ReservedFallback.IntentID)
+			continue
+		}
+		if tx.Settlement == nil {
+			continue
+		}
+		for _, result := range tx.Settlement.Settlement.Outgoing {
+			if result.FallbackAmount.Sign() == 0 {
+				completed = append(completed, result.IntentID)
+			}
+		}
+	}
+	if len(completed) == 0 {
+		return nil
+	}
+	wrapper, err := message.WrapMsg(&message.NettingProgressMsg{NodeID: p.nodeID, IntentIDs: completed})
+	if err != nil {
+		return fmt.Errorf("wrap netting progress: %w", err)
+	}
+	supervisor, err := p.resolver.GetSupervisor()
+	if err != nil {
+		return fmt.Errorf("resolve netting progress supervisor: %w", err)
+	}
+	p.conn.SendMsg2Dest(ctx, supervisor, wrapper)
 
 	return nil
 }

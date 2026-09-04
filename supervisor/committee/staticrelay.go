@@ -24,6 +24,7 @@ type StaticRelayCommittee struct {
 	txSource    txsource.TxSource // txSource brings the txs into the blockchain system.
 	sl          stopLogic         // sl is the logic of stop.
 	unsentTxNum int64
+	netting     *nettingWorkload
 
 	cfg config.SupervisorCfg
 }
@@ -44,6 +45,7 @@ func NewStaticRelayCommittee(
 		txSource:    ts,
 		sl:          stopLogic{stopThreshold: cfg.ShardNum * stopThresholdPerShard, stopCnt: 0},
 		unsentTxNum: cfg.TxNumber,
+		netting:     newNettingWorkload(cfg.NettingCfg.Enabled, cfg.ShardNum, cfg.ChainID),
 		cfg:         cfg,
 	}, nil
 }
@@ -57,6 +59,9 @@ func (s *StaticRelayCommittee) SendTxsAndConsensus(ctx context.Context) error {
 }
 
 func (s *StaticRelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.WrappedMsg) error {
+	if msg.GetMsgType() == message.NettingProgressMessageType {
+		return s.netting.handleProgress(msg)
+	}
 	if msg.GetMsgType() != message.RelayBlockInfoMessageType {
 		slog.Info("unknown expected msg type", "type", msg.GetMsgType())
 		return nil
@@ -67,7 +72,7 @@ func (s *StaticRelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.Wrapp
 		return fmt.Errorf("decode relayBlockInfoMsg: %w", err)
 	}
 
-	if s.unsentTxNum <= 0 &&
+	if s.unsentTxNum <= 0 && s.netting.finished() &&
 		len(bInfo.InnerShardTxs)+len(bInfo.Relay1Txs)+len(bInfo.Relay2Txs) == 0 {
 		s.sl.stopCnt++
 	} else if s.unsentTxNum <= 0 {
@@ -85,6 +90,10 @@ func (s *StaticRelayCommittee) readTxsAndSend(ctx context.Context) error {
 	txs, err := s.txSource.ReadTxs(min(s.cfg.TxInjectionSpeed, s.unsentTxNum))
 	if err != nil {
 		return fmt.Errorf("failed to read txs: %w", err)
+	}
+	txs, err = s.netting.convert(txs)
+	if err != nil {
+		return err
 	}
 
 	// send transactions

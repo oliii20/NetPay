@@ -196,13 +196,31 @@ func validateInstructions(registryState *registry.Registry, shardID int64, settl
 		}, result.MatchedAmount)
 	}
 	if !equalBalances(outgoing, incoming) {
-		return ErrSettlementConservation
+		return fmt.Errorf(
+			"%w: shard %d outgoing=%s incoming=%s",
+			ErrSettlementConservation,
+			shardID,
+			formatBalances(outgoing),
+			formatBalances(incoming),
+		)
 	}
 
 	return nil
 }
 
+func formatBalances(amounts map[balanceKey]*big.Int) string {
+	result := ""
+	for key, amount := range amounts {
+		result += fmt.Sprintf("[%d:%x=%s]", key.Counterparty, key.AssetID, amount)
+	}
+
+	return result
+}
+
 func addAmount(amounts map[balanceKey]*big.Int, key balanceKey, amount *big.Int) {
+	if amount.Sign() == 0 {
+		return
+	}
 	if amounts[key] == nil {
 		amounts[key] = new(big.Int)
 	}

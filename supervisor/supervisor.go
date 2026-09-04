@@ -19,7 +19,10 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure/relaystats"
 )
 
-const wmBufferSize = 1 << 16
+const (
+	wmBufferSize               = 1 << 16
+	nettingShutdownGracePeriod = 2 * time.Second
+)
 
 type Supervisor struct {
 	r    nodetopo.NodeMapper  // r give the information of other nodes.
@@ -159,7 +162,7 @@ func (s *Supervisor) Start() error {
 		return fmt.Errorf("failed to wrap stop consensus message: %w", err)
 	}
 
-	destNodes := make([]nodetopo.NodeInfo, 0)
+	normalNodes := make([]nodetopo.NodeInfo, 0)
 
 	for i := range s.cfg.ShardNum {
 		ls, err := s.r.GetNodesInShard(i)
@@ -167,10 +170,25 @@ func (s *Supervisor) Start() error {
 			return fmt.Errorf("get all leaders failed when trying to send stop: %w", err)
 		}
 
-		destNodes = append(destNodes, ls...)
+		normalNodes = append(normalNodes, ls...)
 	}
-
-	s.conn.GroupBroadcastMessage(context.Background(), destNodes, wMsg)
+	s.conn.GroupBroadcastMessage(context.Background(), normalNodes, wMsg)
+	if s.cfg.NettingCfg.Enabled {
+		// Keep Solver and Beacon alive while ordinary shards consume their stop
+		// message and finish any receipt sends already in flight.
+		time.Sleep(nettingShutdownGracePeriod)
+		beaconNodes, resolveErr := s.r.GetNodesInShard(nodetopo.BeaconShardID)
+		if resolveErr != nil {
+			return fmt.Errorf("get Beacon nodes when trying to send stop: %w", resolveErr)
+		}
+		systemNodes := append([]nodetopo.NodeInfo(nil), beaconNodes...)
+		solverNode, resolveErr := s.r.GetSolver()
+		if resolveErr != nil {
+			return fmt.Errorf("get Solver when trying to send stop: %w", resolveErr)
+		}
+		systemNodes = append(systemNodes, solverNode)
+		s.conn.GroupBroadcastMessage(context.Background(), systemNodes, wMsg)
+	}
 
 	slog.Info("supervisor is closing")
 	s.conn.Close()

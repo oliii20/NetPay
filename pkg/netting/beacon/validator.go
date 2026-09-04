@@ -86,11 +86,40 @@ func (v *Validator) Validate(proposal model.BatchProposal) error {
 	}
 	if !reflect.DeepEqual(expected.Header, proposal.Header) ||
 		!reflect.DeepEqual(expected.Sidecar.IntentResults, proposal.Sidecar.IntentResults) ||
-		!reflect.DeepEqual(expected.Sidecar.ShardSettlements, proposal.Sidecar.ShardSettlements) {
+		!equalShardSettlements(expected.Sidecar.ShardSettlements, proposal.Sidecar.ShardSettlements) {
 		return ErrDerivedBatchMismatch
 	}
 
 	return nil
+}
+
+func equalShardSettlements(expected, actual []model.ShardSettlement) bool {
+	if len(expected) != len(actual) {
+		return false
+	}
+	for idx := range expected {
+		left, right := expected[idx], actual[idx]
+		if left.BatchID != right.BatchID || left.WindowID != right.WindowID || left.ShardID != right.ShardID ||
+			left.ChunkIndex != right.ChunkIndex || left.ChunkCount != right.ChunkCount ||
+			!equalIntentResults(left.Outgoing, right.Outgoing) || !equalIntentResults(left.Incoming, right.Incoming) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func equalIntentResults(expected, actual []model.IntentResult) bool {
+	if len(expected) != len(actual) {
+		return false
+	}
+	for idx := range expected {
+		if !reflect.DeepEqual(expected[idx], actual[idx]) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func validateSequence(header model.MatchRootBlockBody, tip MatchRootBlock, hasTip bool) error {

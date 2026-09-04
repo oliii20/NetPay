@@ -18,6 +18,7 @@ type SystemCfg struct {
 type SupervisorCfg struct {
 	SystemCfg
 	NettingCfg       NettingCfg `json:"-" yaml:"-"`
+	ChainID          int64      `json:"-" yaml:"-"`
 	TxNumber         int64      `json:"tx_number"          yaml:"tx_number"`
 	TxInjectionSpeed int64      `json:"tx_injection_speed" yaml:"tx_injection_speed"` // transactions per second
 	ResultOutputDir  string     `json:"result_output_dir"  yaml:"result_output_dir"`

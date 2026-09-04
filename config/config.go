@@ -63,6 +63,7 @@ func LoadConfig(path string) (*Config, error) {
 	// pass the global system config to the supervisor config
 	cfg.SystemCfg = cfg.GlobalSys
 	cfg.SupervisorCfg.NettingCfg = cfg.NettingCfg
+	cfg.SupervisorCfg.ChainID = cfg.ConsensusNodeCfg.ChainID
 	// pass the global system config to the consensus config
 	cfg.ConsensusNodeCfg.SystemCfg = cfg.GlobalSys
 	cfg.ConsensusNodeCfg.NettingCfg = cfg.NettingCfg

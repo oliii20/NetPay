@@ -92,12 +92,35 @@ func TestSolverRejectsNonLeaderAndInvalidShard(t *testing.T) {
 	require.ErrorIs(t, err, solver.ErrInvalidReceiptShard)
 }
 
-type testP2P struct {
-	sent []*rpcserver.WrappedMsg
+func TestSolverStopsAfterConsensusStopMessage(t *testing.T) {
+	p2p := &testP2P{}
+	store, err := batchstore.Open(filepath.Join(t.TempDir(), "solver.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	node, err := solver.New(solver.Config{
+		ShardCount: 2, BatchSize: 2, MaxWindowDuration: time.Minute, TickInterval: time.Millisecond,
+	}, network.NewConnHandler(p2p), testResolver{}, store)
+	require.NoError(t, err)
+	stop, err := message.WrapMsg(message.StopConsensusMsg{})
+	require.NoError(t, err)
+	p2p.received = []*rpcserver.WrappedMsg{stop}
+
+	err = node.Step(context.Background())
+	require.EqualError(t, err, "solver stopped")
 }
 
-func (*testP2P) ListenStart() error                      { return nil }
-func (*testP2P) DrainMsgBuffer() []*rpcserver.WrappedMsg { return nil }
+type testP2P struct {
+	sent     []*rpcserver.WrappedMsg
+	received []*rpcserver.WrappedMsg
+}
+
+func (*testP2P) ListenStart() error { return nil }
+func (p *testP2P) DrainMsgBuffer() []*rpcserver.WrappedMsg {
+	result := p.received
+	p.received = nil
+
+	return result
+}
 func (p *testP2P) SendMsg2Dest(_ context.Context, _ nodetopo.NodeInfo, msg *rpcserver.WrappedMsg) {
 	p.sent = append(p.sent, msg)
 }

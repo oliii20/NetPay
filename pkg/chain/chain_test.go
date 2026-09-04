@@ -57,6 +57,27 @@ func TestChain(t *testing.T) {
 	fetchBlocksCheck(t, bc)
 }
 
+func TestGenesisHashIsDeterministicAcrossReplicas(t *testing.T) {
+	firstCfg := getTestConfig()
+	firstCfg.BoltCfg.FilePathDir = t.TempDir()
+	secondCfg := getTestConfig()
+	secondCfg.BoltCfg.FilePathDir = t.TempDir()
+	first, err := NewChain(firstCfg, config.LocalParams{ShardID: 0, NodeID: 0})
+	require.NoError(t, err)
+	second, err := NewChain(secondCfg, config.LocalParams{ShardID: 0, NodeID: 1})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, first.Close())
+		require.NoError(t, second.Close())
+	})
+
+	firstHash, err := first.GetCurHeader().Hash()
+	require.NoError(t, err)
+	secondHash, err := second.GetCurHeader().Hash()
+	require.NoError(t, err)
+	require.Equal(t, firstHash, secondHash)
+}
+
 func clearChainStorage() {
 	_ = os.RemoveAll(chainStorageTestDir)
 }

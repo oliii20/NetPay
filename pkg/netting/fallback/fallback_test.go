@@ -1,7 +1,9 @@
 package fallback_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"math/big"
 	"testing"
 	"time"
@@ -79,9 +81,13 @@ func TestPublisherSendsPendingAndCompletionMessages(t *testing.T) {
 		*transaction.NewReservedFallbackTransaction(item, time.Unix(1, 0)),
 	}}}
 	require.NoError(t, publisher.PublishAfterBlock(context.Background(), committed))
-	require.Len(t, p2p.messages, 3)
+	require.Len(t, p2p.messages, 4)
 	require.Equal(t, message.FallbackCompletedMessageType, p2p.messages[0].GetMsgType())
-	require.Equal(t, message.FallbackTxMessageType, p2p.messages[2].GetMsgType())
+	require.Equal(t, message.NettingProgressMessageType, p2p.messages[2].GetMsgType())
+	var progress message.NettingProgressMsg
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(p2p.messages[2].GetPayload())).Decode(&progress))
+	require.Equal(t, []intent.ID{item.IntentID}, progress.IntentIDs)
+	require.Equal(t, message.FallbackTxMessageType, p2p.messages[3].GetMsgType())
 }
 
 type fallbackReader struct {

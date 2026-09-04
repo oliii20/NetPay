@@ -78,6 +78,8 @@ func getMsgType(msg any) (string, error) {
 		msgType = NettingBeaconMetricMessageType
 	case *NettingExecutionMetricMsg, NettingExecutionMetricMsg:
 		msgType = NettingExecutionMetricMessageType
+	case *NettingProgressMsg, NettingProgressMsg:
+		msgType = NettingProgressMessageType
 
 	case *RelayBlockInfoMsg, RelayBlockInfoMsg:
 		msgType = RelayBlockInfoMessageType

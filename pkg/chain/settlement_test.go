@@ -155,6 +155,42 @@ func TestSettlementRejectsUnconfirmedOrTamperedPackage(t *testing.T) {
 	require.ErrorContains(t, err, "invalid settlement proof")
 }
 
+func TestSettlementAcceptsFullyUnmatchedDirection(t *testing.T) {
+	ctx := context.Background()
+	shard0 := newSettlementTestChain(t, 0)
+	shard1 := newSettlementTestChain(t, 1)
+	payment := settlementIntent(0, 1, 10, 0x71, 0x72)
+	reserveIntent(t, shard0, payment)
+	proposal, err := (batch.Builder{}).Build(window.FrozenWindow{
+		WindowID: 1,
+		Cuts:     []model.ShardCut{{ShardID: 0}, {ShardID: 1}},
+		Intents:  []intent.PaymentIntent{payment},
+	}, merkle.Hash{})
+	require.NoError(t, err)
+	packages, err := batch.BuildSettlementPackages(proposal)
+	require.NoError(t, err)
+	require.NoError(t, shard0.ConfirmMatchRoot(ctx, proposal.Header))
+	require.NoError(t, shard1.ConfirmMatchRoot(ctx, proposal.Header))
+	for _, pack := range packages {
+		chain := shard0
+		if pack.Settlement.ShardID == 1 {
+			chain = shard1
+		}
+		tx := transaction.NewSettlementTransaction(pack, time.Now())
+		settlementBlock, blockErr := chain.GenerateBlock(
+			ctx, testMiner, block.TxBlockType,
+			block.Body{TxList: []transaction.Transaction{*tx}}, block.MigrationOpt{},
+		)
+		require.NoError(t, blockErr)
+		require.NoError(t, chain.AddBlock(ctx, settlementBlock))
+	}
+
+	pending, err := shard0.GetPendingFallbacks(ctx)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Equal(t, payment.Amount, pending[0].Amount)
+}
+
 func newSettlementTestChain(t *testing.T, shardID int64) *Chain {
 	t.Helper()
 	cfg := getTestConfig()

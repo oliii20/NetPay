@@ -7,6 +7,7 @@
 # Do not upload your experimental results!
 expTest
 exp
+.exp
 
 # 不要上传可执行文件！
 # Do not upload your executable files!

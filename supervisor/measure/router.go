@@ -27,7 +27,8 @@ func (r *Router) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 		message.MatchRootFinalizedMessageType,
 		message.SettlementPackageMessageType,
 		message.FallbackTxMessageType,
-		message.FallbackCompletedMessageType:
+		message.FallbackCompletedMessageType,
+		message.NettingProgressMessageType:
 		return nil
 	default:
 		return r.legacy.UpdateMeasureRecord(wrapped)

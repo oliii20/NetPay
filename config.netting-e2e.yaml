@@ -1,0 +1,62 @@
+system:
+  shard_num: 4
+  node_num: 4
+  limit: 100
+  consensus_type: "static_relay"
+  log:
+    log_dir: "./.exp/netting-e2e/"
+    log_level: "info"
+
+consensus_node:
+  blockchain:
+    bloom_filter:
+      bitset_len: 4096
+      filter_hash_func: [sha256, sha512, sha1]
+    storage:
+      block_storage_type: "bolt"
+      trie_storage_type: "eth_level_db"
+      bolt:
+        file_path_dir: "./.exp/netting-e2e/boltdb/"
+      eth_storage:
+        is_memory_db: true
+        level_file_path_dir: "./.exp/netting-e2e/trie_db/"
+        old_state_root: ""
+    vm:
+      chain_id: 11
+      vm_state_dir: "./.exp/netting-e2e/vm_state/"
+  tx_pool:
+    type: "number"
+  block_interval: 500
+  block_record_dir: "./.exp/netting-e2e/block_record/"
+
+netting:
+  enabled: true
+  metrics_enabled: true
+  batch_size: 20
+  max_window_duration_ms: 1000
+  solver_tick_interval_ms: 100
+  batch_store_path: "./.exp/netting-e2e/netting/solver.db"
+  beacon_store_path: "./.exp/netting-e2e/netting/beacon.db"
+
+supervisor:
+  tx_number: 100
+  tx_injection_speed: 100
+  result_output_dir: "./.exp/netting-e2e/results/"
+  epoch_duration: 50
+  tx_source:
+    tx_source_type: "random_source"
+    tx_source_file: ""
+    exclude_contract_txs: true
+  broker_module:
+    broker_file_path: "./pkg/broker/broker"
+    broker_num: 50
+
+network:
+  bandwidth: 1000000
+  latency: 0
+  communication_mode: "direct"
+  libp2p:
+    bootstrap_key_fp: "./pkg/network/connlibp2p/bootstrap.key"
+    bootstrap_peer: "12D3KooWR6siPMZ2sMFKbgwaJFwQfnKczuPZnxHfyy1dHTzZSAUY"
+    bootstrap_ip: "127.0.0.1"
+    bootstrap_port: 12345

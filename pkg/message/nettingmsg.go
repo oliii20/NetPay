@@ -1,6 +1,9 @@
 package message
 
-import "github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
+import (
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
+)
 
 const (
 	FinalizedBlockReceiptMessageType  = "FinalizedBlockReceipt"
@@ -12,6 +15,7 @@ const (
 	NettingBatchMetricMessageType     = "NettingBatchMetric"
 	NettingBeaconMetricMessageType    = "NettingBeaconMetric"
 	NettingExecutionMetricMessageType = "NettingExecutionMetric"
+	NettingProgressMessageType        = "NettingProgress"
 )
 
 type FinalizedBlockReceiptMsg struct {
@@ -58,4 +62,9 @@ type NettingBeaconMetricMsg struct {
 type NettingExecutionMetricMsg struct {
 	NodeID  int64
 	Metrics []model.NettingExecutionMetric
+}
+
+type NettingProgressMsg struct {
+	NodeID    int64
+	IntentIDs []intent.ID
 }
