@@ -62,6 +62,16 @@ type ValidationContext struct {
 	CurrentEpoch uint64
 }
 
+func (p PaymentIntent) Clone() PaymentIntent {
+	cloned := p
+	if p.Amount != nil {
+		cloned.Amount = new(big.Int).Set(p.Amount)
+	}
+	cloned.Signature = bytes.Clone(p.Signature)
+
+	return cloned
+}
+
 // Validate checks the protocol rules that are independent from account state.
 func (p PaymentIntent) Validate(ctx ValidationContext) error {
 	if p.Version != CurrentVersion {

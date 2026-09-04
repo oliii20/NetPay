@@ -100,6 +100,11 @@ func (r *RelayTxBlockOp) modifyTxRelayOpt(
 	shardID := r.c.GetShardID()
 
 	for _, tx := range txs {
+		if tx.TxType() == transaction.IntentSubmitTxType {
+			modifiedTxs = append(modifiedTxs, tx)
+			continue
+		}
+
 		// if this transaction's relay stage is determined, not modify it
 		if tx.RelayStage != transaction.UndeterminedRelayTx {
 			modifiedTxs = append(modifiedTxs, tx)
@@ -164,6 +169,10 @@ func (r *RelayTxBlockOp) splitTxs(
 	)
 
 	for _, tx := range txs {
+		if tx.TxType() == transaction.IntentSubmitTxType {
+			continue
+		}
+
 		switch tx.RelayStage {
 		case transaction.UndeterminedRelayTx:
 			innerTxs = append(innerTxs, tx)

@@ -90,6 +90,25 @@ func NewTransaction(
 	return tx
 }
 
+func NewIntentTransaction(payment intent.PaymentIntent, proposeTime time.Time) *Transaction {
+	cloned := payment.Clone()
+	var value *big.Int
+	if cloned.Amount != nil {
+		value = new(big.Int).Set(cloned.Amount)
+	}
+
+	return &Transaction{
+		Sender:      cloned.Sender,
+		Recipient:   cloned.Recipient,
+		Value:       value,
+		PriorityFee: new(big.Int),
+		Nonce:       cloned.Nonce,
+		CreateTime:  proposeTime,
+		GasLimit:    defaultGasLimit,
+		IntentTxOpt: IntentTxOpt{Intent: &cloned},
+	}
+}
+
 // Encode encodes transactions.
 // Transaction encode should be prepare
 func (tx *Transaction) Encode() ([]byte, error) {

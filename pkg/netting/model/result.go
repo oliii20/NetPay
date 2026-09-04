@@ -2,7 +2,6 @@
 package model
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"math/big"
@@ -74,11 +73,5 @@ func (r IntentResult) Validate() error {
 }
 
 func CloneIntent(payment intent.PaymentIntent) intent.PaymentIntent {
-	cloned := payment
-	if payment.Amount != nil {
-		cloned.Amount = new(big.Int).Set(payment.Amount)
-	}
-	cloned.Signature = bytes.Clone(payment.Signature)
-
-	return cloned
+	return payment.Clone()
 }

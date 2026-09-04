@@ -117,6 +117,10 @@ func (bto *BrokerTxBlockOp) splitTxs(
 	)
 
 	for _, tx := range txs {
+		if tx.TxType() == transaction.IntentSubmitTxType {
+			continue
+		}
+
 		// Relay fallback (static_broker only; clpa_broker never injects RelayTxType).
 		if tx.TxType() == transaction.RelayTxType {
 			if tx.RelayStage == transaction.Relay1Tx {

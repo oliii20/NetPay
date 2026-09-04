@@ -70,6 +70,28 @@ func TestIntentTransactionEncodingCommitsSignature(t *testing.T) {
 	require.NotEqual(t, leftHash, rightHash)
 }
 
+func TestNewIntentTransactionCopiesEnvelopeAndIntent(t *testing.T) {
+	t.Parallel()
+
+	payment := transactionTestIntent([]byte("signature"))
+	payment.Sender[0] = 2
+	payment.Nonce = 3
+	createdAt := time.Unix(123, 456)
+	tx := NewIntentTransaction(*payment, createdAt)
+
+	require.Equal(t, payment.Sender, tx.Sender)
+	require.Equal(t, payment.Recipient, tx.Recipient)
+	require.Equal(t, payment.Amount, tx.Value)
+	require.Equal(t, payment.Nonce, tx.Nonce)
+	require.Equal(t, createdAt, tx.CreateTime)
+	require.Equal(t, IntentSubmitTxType, tx.TxType())
+
+	payment.Amount.SetInt64(99)
+	payment.Signature[0] = 'X'
+	require.Equal(t, int64(5), tx.Intent.Amount.Int64())
+	require.Equal(t, []byte("signature"), tx.Intent.Signature)
+}
+
 func transactionTestIntent(signature []byte) *intent.PaymentIntent {
 	var recipient account.Address
 	recipient[0] = 1

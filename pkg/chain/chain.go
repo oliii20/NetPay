@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -28,6 +29,14 @@ import (
 )
 
 const blocksFetchLimit = 100
+
+var (
+	ErrParentBlockHashMismatch = errors.New("parent block hash mismatch")
+	ErrBlockNumberMismatch     = errors.New("block number mismatch")
+	ErrInvalidBlockType        = errors.New("invalid block type")
+	ErrStateRootMismatch       = errors.New("state root mismatch")
+	ErrLocationRootMismatch    = errors.New("location root mismatch")
+)
 
 // Chain describes a blockchain.
 type Chain struct {
@@ -94,6 +103,18 @@ func (c *Chain) GenerateBlock(
 		return nil, fmt.Errorf("create parent header err: %w", err)
 	}
 
+	header := block.Header{
+		ParentBlockHash: parentHeader,
+		Number:          c.curHeader.Number + 1,
+		Miner:           miner,
+		Type:            blockType,
+		CreateTime:      time.Now(),
+	}
+	body, err = c.curateIntentTransactions(ctx, header, body)
+	if err != nil {
+		return nil, fmt.Errorf("curate payment intents: %w", err)
+	}
+
 	// Calculate the TxHeaderOpt.
 	tOpt, err := c.calcTxHeaderOpt(body)
 	if err != nil {
@@ -106,16 +127,8 @@ func (c *Chain) GenerateBlock(
 		return nil, fmt.Errorf("get account state root err: %w", err)
 	}
 
-	header := block.Header{
-		ParentBlockHash: parentHeader,
-		Number:          c.curHeader.Number + 1,
-		Miner:           miner,
-		Type:            blockType,
-		CreateTime:      time.Now(),
-
-		TxHeaderOpt:        *tOpt,
-		MigrationHeaderOpt: *mHeaderOpt,
-	}
+	header.TxHeaderOpt = *tOpt
+	header.MigrationHeaderOpt = *mHeaderOpt
 
 	b := block.NewBlock(header, body, mOpt)
 
@@ -137,6 +150,9 @@ func (c *Chain) GenerateBlock(
 func (c *Chain) AddBlock(ctx context.Context, b *block.Block) error {
 	c.mux.Lock()
 	defer c.mux.Unlock()
+	if err := c.validateBlock(ctx, b); err != nil {
+		return fmt.Errorf("validate block before add: %w", err)
+	}
 
 	var (
 		err                              error
@@ -156,8 +172,15 @@ func (c *Chain) AddBlock(ctx context.Context, b *block.Block) error {
 	}
 
 	// Update the location trie and vm trie db.
-	if _, _, err = c.updateTrieByBlock(ctx, b); err != nil {
+	stateRoot, locationRoot, err := c.updateTrieByBlock(ctx, b)
+	if err != nil {
 		return fmt.Errorf("update trie err: %w", err)
+	}
+	if !bytes.Equal(stateRoot, b.StateRoot) {
+		return ErrStateRootMismatch
+	}
+	if !bytes.Equal(locationRoot, b.LocationRoot) {
+		return ErrLocationRootMismatch
 	}
 
 	// Add to storage.
@@ -169,7 +192,7 @@ func (c *Chain) AddBlock(ctx context.Context, b *block.Block) error {
 	c.curHeader = b.Header
 
 	slog.InfoContext(ctx, "block is generated",
-		"shard ID", c.GetShardID(), "block height", b.Number, "block create time", b.CreateTime)
+		"shard ID", c.shardID, "block height", b.Number, "block create time", b.CreateTime)
 
 	return nil
 }
@@ -200,7 +223,28 @@ func (c *Chain) GetAccountLocationsInTxs(
 }
 
 // ValidateBlock validates blocks according to the chain's config.
-func (c *Chain) ValidateBlock(_ context.Context, b *block.Block) error {
+func (c *Chain) ValidateBlock(ctx context.Context, b *block.Block) error {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+
+	return c.validateBlock(ctx, b)
+}
+
+func (c *Chain) validateBlock(ctx context.Context, b *block.Block) error {
+	parentHash, err := c.curHeader.Hash()
+	if err != nil {
+		return fmt.Errorf("calculate current header hash: %w", err)
+	}
+	if !bytes.Equal(parentHash, b.ParentBlockHash) {
+		return ErrParentBlockHashMismatch
+	}
+	if b.Number != c.curHeader.Number+1 {
+		return fmt.Errorf("%w: got %d, want %d", ErrBlockNumberMismatch, b.Number, c.curHeader.Number+1)
+	}
+	if err = validateBlockStructure(b); err != nil {
+		return err
+	}
+
 	// Validate the transaction part.
 	tH, err := c.calcTxHeaderOpt(b.Body)
 	if err != nil {
@@ -223,6 +267,37 @@ func (c *Chain) ValidateBlock(_ context.Context, b *block.Block) error {
 
 	if !bytes.Equal(mH.MigratedAccountsRoot, b.MigratedAccountsRoot) {
 		return fmt.Errorf("migration root mismatch")
+	}
+
+	stateRoot, locationRoot, err := c.previewStateRootByBlock(ctx, b)
+	if err != nil {
+		return fmt.Errorf("preview block state: %w", err)
+	}
+	if !bytes.Equal(stateRoot, b.StateRoot) {
+		return ErrStateRootMismatch
+	}
+	if !bytes.Equal(locationRoot, b.LocationRoot) {
+		return ErrLocationRootMismatch
+	}
+
+	return nil
+}
+
+func validateBlockStructure(b *block.Block) error {
+	if len(b.MigratedAddrs) != len(b.MigratedStates) {
+		return fmt.Errorf("%w: migration address/state length mismatch", ErrInvalidBlockType)
+	}
+	switch b.Type {
+	case block.TxBlockType:
+		if len(b.MigratedAddrs) != 0 {
+			return fmt.Errorf("%w: transaction block contains migration data", ErrInvalidBlockType)
+		}
+	case block.MigrationBlockType:
+		if len(b.TxList) != 0 {
+			return fmt.Errorf("%w: migration block contains transactions", ErrInvalidBlockType)
+		}
+	default:
+		return fmt.Errorf("%w: %d", ErrInvalidBlockType, b.Type)
 	}
 
 	return nil
@@ -434,6 +509,10 @@ func (c *Chain) txExecute(
 	case transaction.BrokerTxType:
 		if err := brokerTxExecute(v, addrLoc, c.shardID, tx); err != nil {
 			return fmt.Errorf("execute broker tx failed: %w", err)
+		}
+	case transaction.IntentSubmitTxType:
+		if err := c.intentTxExecute(v, tx); err != nil {
+			return fmt.Errorf("execute payment intent failed: %w", err)
 		}
 	case transaction.CreateContractTxType:
 		contractAddr, _, err := c.contractExec.CreateContractTxExecute(v, bCtx, tx)
