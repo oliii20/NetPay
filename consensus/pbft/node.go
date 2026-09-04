@@ -48,6 +48,32 @@ type Node struct {
 	pbftMsgHandler map[string]messageHandleFunc
 }
 
+// NewSpecialPBFTNode reuses the PBFT engine for a system shard whose proposal
+// storage and outside-message handling are supplied by protocol-specific ops.
+func NewSpecialPBFTNode(
+	conn *network.ConnHandler,
+	r nodetopo.NodeMapper,
+	cfg config.ConsensusNodeCfg,
+	lp config.LocalParams,
+	iop insideop.ShardInsideOp,
+	omh outsideop.ShardOutsideMsgHandler,
+) (*Node, error) {
+	if !nodetopo.IsSystemShardID(lp.ShardID) {
+		return nil, fmt.Errorf("special PBFT node requires a system shard, got %d", lp.ShardID)
+	}
+	if cfg.NodeNum <= 0 || lp.NodeID < 0 || lp.NodeID >= cfg.NodeNum {
+		return nil, fmt.Errorf("invalid nodeID=%d", lp.NodeID)
+	}
+	if conn == nil || r == nil || iop == nil || omh == nil {
+		return nil, fmt.Errorf("special PBFT node has a nil dependency")
+	}
+
+	return &Node{
+		conn: conn, resolver: r, pbftMeta: newConsensusMeta(cfg, lp),
+		iop: iop, omh: omh, pbftMsgHandler: make(map[string]messageHandleFunc),
+	}, nil
+}
+
 // NewPBFTNode creates a new node running PBFT consensus with given configurations.
 func NewPBFTNode(
 	conn *network.ConnHandler,
@@ -180,7 +206,7 @@ func (n *Node) run() {
 					slog.ErrorContext(ctx, "propose failed", "err", err)
 				}
 			}
-		} else if n.pbftMeta.catchupReady() {
+		} else if n.bc != nil && n.pbftMeta.catchupReady() {
 			// If this node is not the leader, check whether to use catch-up.
 			if err := n.catchUpStart(ctx); err != nil {
 				slog.ErrorContext(ctx, "catchupStart failed", "err", err)
@@ -398,9 +424,12 @@ func (n *Node) step2NextStage(ctx context.Context) error {
 			if n.pbftMeta.leader != n.pbftMeta.lp.NodeID {
 				return nil
 			}
-			// record this block
-			if err = n.recordBlock(n.pbftMeta.lastProposal.Block); err != nil {
-				return fmt.Errorf("record block failed: %w", err)
+			// Ordinary shards record transaction blocks. System shards persist
+			// their proposal through their protocol-specific inside operation.
+			if n.csw != nil && n.pbftMeta.lastProposal.Block != nil {
+				if err = n.recordBlock(n.pbftMeta.lastProposal.Block); err != nil {
+					return fmt.Errorf("record block failed: %w", err)
+				}
 			}
 
 			return nil
@@ -546,6 +575,10 @@ func (n *Node) closeAll() {
 	slog.Info("consensus node is closing")
 
 	n.conn.Close()
-	_ = n.bc.Close()
-	_ = n.csw.Close()
+	if n.bc != nil {
+		_ = n.bc.Close()
+	}
+	if n.csw != nil {
+		_ = n.csw.Close()
+	}
 }

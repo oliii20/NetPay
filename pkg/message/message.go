@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network/rpcserver"
 )
 
@@ -31,7 +32,13 @@ func WrapMsg(msg any) (*rpcserver.WrappedMsg, error) {
 }
 
 func WrapProposal(b *block.Block) *Proposal {
-	return &Proposal{b}
+	return &Proposal{Block: b}
+}
+
+func WrapNettingProposal(proposal model.BatchProposal) *Proposal {
+	cloned := proposal.Clone()
+
+	return &Proposal{NettingBatch: &cloned}
 }
 
 func getMsgType(msg any) (string, error) {
@@ -57,6 +64,8 @@ func getMsgType(msg any) (string, error) {
 		msgType = FinalizedBlockReceiptMessageType
 	case *BatchProposalMsg, BatchProposalMsg:
 		msgType = BatchProposalMessageType
+	case *MatchRootFinalizedMsg, MatchRootFinalizedMsg:
+		msgType = MatchRootFinalizedMessageType
 
 	case *RelayBlockInfoMsg, RelayBlockInfoMsg:
 		msgType = RelayBlockInfoMessageType

@@ -39,6 +39,7 @@ type NettingCfg struct {
 	MaxWindowDurationMS  int64  `json:"max_window_duration_ms" yaml:"max_window_duration_ms"`
 	SolverTickIntervalMS int64  `json:"solver_tick_interval_ms" yaml:"solver_tick_interval_ms"`
 	BatchStorePath       string `json:"batch_store_path"       yaml:"batch_store_path"`
+	BeaconStorePath      string `json:"beacon_store_path"      yaml:"beacon_store_path"`
 }
 
 type TxSourceCfg struct {

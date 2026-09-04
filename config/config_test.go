@@ -25,6 +25,7 @@ var expectedCfg = Config{
 		MaxWindowDurationMS:  2000,
 		SolverTickIntervalMS: 100,
 		BatchStorePath:       "./exp_test/netting/solver.db",
+		BeaconStorePath:      "./exp_test/netting/beacon.db",
 	},
 	ConsensusNodeCfg: ConsensusNodeCfg{
 		BlockchainCfg: BlockchainCfg{
@@ -55,6 +56,7 @@ var expectedCfg = Config{
 			MaxWindowDurationMS:  2000,
 			SolverTickIntervalMS: 100,
 			BatchStorePath:       "./exp_test/netting/solver.db",
+			BeaconStorePath:      "./exp_test/netting/beacon.db",
 		},
 		BlockInterval:  5000,
 		BlockRecordDir: "./exp_test/block_record/",

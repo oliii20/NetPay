@@ -113,15 +113,22 @@ func (n *Node) Step(ctx context.Context) error {
 }
 
 func (n *Node) HandleMessage(_ context.Context, wrapped *rpcserver.WrappedMsg) error {
-	if wrapped.GetMsgType() != message.FinalizedBlockReceiptMessageType {
+	switch wrapped.GetMsgType() {
+	case message.FinalizedBlockReceiptMessageType:
+		var msg message.FinalizedBlockReceiptMsg
+		if err := gob.NewDecoder(bytes.NewReader(wrapped.GetPayload())).Decode(&msg); err != nil {
+			return fmt.Errorf("decode finalized receipt: %w", err)
+		}
+		return n.HandleReceipt(msg)
+	case message.MatchRootFinalizedMessageType:
+		var msg message.MatchRootFinalizedMsg
+		if err := gob.NewDecoder(bytes.NewReader(wrapped.GetPayload())).Decode(&msg); err != nil {
+			return fmt.Errorf("decode finalized MatchRoot: %w", err)
+		}
+		return n.HandleFinalized(msg)
+	default:
 		return nil
 	}
-	var msg message.FinalizedBlockReceiptMsg
-	if err := gob.NewDecoder(bytes.NewReader(wrapped.GetPayload())).Decode(&msg); err != nil {
-		return fmt.Errorf("decode finalized receipt: %w", err)
-	}
-
-	return n.HandleReceipt(msg)
 }
 
 func (n *Node) HandleReceipt(msg message.FinalizedBlockReceiptMsg) error {
@@ -152,6 +159,18 @@ func (n *Node) HandleReceipt(msg message.FinalizedBlockReceiptMsg) error {
 
 func (n *Node) PendingBatchIDs() []merkle.Hash {
 	return append([]merkle.Hash(nil), n.pending...)
+}
+
+func (n *Node) HandleFinalized(msg message.MatchRootFinalizedMsg) error {
+	if msg.NodeID != 0 {
+		return fmt.Errorf("finalized MatchRoot is not from Beacon leader: node %d", msg.NodeID)
+	}
+	if len(n.pending) == 0 || n.pending[0] != msg.Header.BatchID {
+		return fmt.Errorf("unexpected finalized batch %s", msg.Header.BatchID.String())
+	}
+	n.pending = n.pending[1:]
+
+	return n.store.SaveState(n.snapshot())
 }
 
 func (n *Node) initializeManager() error {
@@ -225,7 +244,7 @@ func (n *Node) dispatchPending(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	wrapped, err := message.WrapMsg(&message.BatchProposalMsg{Proposal: proposal})
+	wrapped, err := message.WrapMsg(&message.BatchProposalMsg{NodeID: 0, Proposal: proposal})
 	if err != nil {
 		return fmt.Errorf("wrap batch proposal: %w", err)
 	}

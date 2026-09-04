@@ -5,6 +5,7 @@ import "github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 const (
 	FinalizedBlockReceiptMessageType = "FinalizedBlockReceipt"
 	BatchProposalMessageType         = "BatchProposal"
+	MatchRootFinalizedMessageType    = "MatchRootFinalized"
 )
 
 type FinalizedBlockReceiptMsg struct {
@@ -13,5 +14,11 @@ type FinalizedBlockReceiptMsg struct {
 }
 
 type BatchProposalMsg struct {
+	NodeID   int64
 	Proposal model.BatchProposal
+}
+
+type MatchRootFinalizedMsg struct {
+	NodeID int64
+	Header model.MatchRootBlockBody
 }

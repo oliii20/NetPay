@@ -45,6 +45,7 @@ netting:
   max_window_duration_ms: 2000
   solver_tick_interval_ms: 100
   batch_store_path: "./exp_test/netting/solver.db"
+  beacon_store_path: "./exp_test/netting/beacon.db"
 
 network:
   bandwidth: 1000000
