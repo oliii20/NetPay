@@ -66,6 +66,8 @@ func getMsgType(msg any) (string, error) {
 		msgType = BatchProposalMessageType
 	case *MatchRootFinalizedMsg, MatchRootFinalizedMsg:
 		msgType = MatchRootFinalizedMessageType
+	case *SettlementPackageMsg, SettlementPackageMsg:
+		msgType = SettlementPackageMessageType
 
 	case *RelayBlockInfoMsg, RelayBlockInfoMsg:
 		msgType = RelayBlockInfoMessageType

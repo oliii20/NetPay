@@ -9,6 +9,8 @@ import (
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 )
 
 func TestTxTypeKeepsLegacyInference(t *testing.T) {
@@ -90,6 +92,27 @@ func TestNewIntentTransactionCopiesEnvelopeAndIntent(t *testing.T) {
 	payment.Signature[0] = 'X'
 	require.Equal(t, int64(5), tx.Intent.Amount.Int64())
 	require.Equal(t, []byte("signature"), tx.Intent.Signature)
+}
+
+func TestSettlementTransactionTypeAndHashCommitPackage(t *testing.T) {
+	t.Parallel()
+
+	pack := model.SettlementPackage{
+		Header: model.MatchRootBlockBody{BatchID: merkle.Hash{1}},
+		Settlement: model.ShardSettlement{
+			BatchID: merkle.Hash{1}, ShardID: 1, ChunkCount: 1,
+		},
+	}
+	left := NewSettlementTransaction(pack, time.Unix(1, 0))
+	require.Equal(t, SettlementTxType, left.TxType())
+	leftHash, err := left.Hash()
+	require.NoError(t, err)
+
+	pack.Settlement.ChunkIndex = 1
+	right := NewSettlementTransaction(pack, time.Unix(1, 0))
+	rightHash, err := right.Hash()
+	require.NoError(t, err)
+	require.NotEqual(t, leftHash, rightHash)
 }
 
 func transactionTestIntent(signature []byte) *intent.PaymentIntent {

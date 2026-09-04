@@ -24,6 +24,7 @@ var (
 	ErrDuplicateShardCut = errors.New("duplicate shard cut")
 	ErrInvalidShardCut   = errors.New("invalid shard cut")
 	ErrMissingShardCut   = errors.New("intent references a shard outside the vector cut")
+	ErrInvalidSettlement = errors.New("invalid shard settlement collection")
 )
 
 type Builder struct{}
@@ -74,6 +75,79 @@ func (Builder) Build(frozen window.FrozenWindow, previousBatchID merkle.Hash) (m
 			ShardSettlements: settlements,
 		},
 	}, nil
+}
+
+func BuildSettlementPackages(proposal model.BatchProposal) ([]model.SettlementPackage, error) {
+	byShard := make(map[int64][]model.ShardSettlement)
+	for _, settlement := range proposal.Sidecar.ShardSettlements {
+		byShard[settlement.ShardID] = append(byShard[settlement.ShardID], settlement.Clone())
+	}
+	shardIDs := make([]int64, 0, len(byShard))
+	for shardID := range byShard {
+		shardIDs = append(shardIDs, shardID)
+	}
+	sort.Slice(shardIDs, func(i, j int) bool { return shardIDs[i] < shardIDs[j] })
+
+	type shardProofData struct {
+		commitment model.ShardCommitment
+		tree       *merkle.Tree
+	}
+	proofData := make(map[int64]shardProofData, len(shardIDs))
+	shardLeaves := make([]merkle.Leaf, 0, len(shardIDs))
+	for _, shardID := range shardIDs {
+		settlements := byShard[shardID]
+		sort.Slice(settlements, func(i, j int) bool { return settlements[i].ChunkIndex < settlements[j].ChunkIndex })
+		chunkLeaves := make([]merkle.Leaf, len(settlements))
+		for idx, settlement := range settlements {
+			if settlement.ChunkCount != uint32(len(settlements)) || settlement.ChunkIndex != uint32(idx) {
+				return nil, fmt.Errorf("%w: shard %d chunk %d", ErrInvalidSettlement, shardID, settlement.ChunkIndex)
+			}
+			payload, err := SettlementPayload(settlement)
+			if err != nil {
+				return nil, err
+			}
+			chunkLeaves[idx] = merkle.Leaf{Key: uint32Key(settlement.ChunkIndex), Payload: payload}
+		}
+		chunkTree, err := merkle.Build(ChunkLeafDomain, chunkLeaves)
+		if err != nil {
+			return nil, fmt.Errorf("build shard %d chunk tree: %w", shardID, err)
+		}
+		shardCommitment := model.ShardCommitment{
+			ShardID: shardID, ShardRoot: chunkTree.Root(), ChunkCount: uint32(len(settlements)),
+		}
+		proofData[shardID] = shardProofData{commitment: shardCommitment, tree: chunkTree}
+		shardLeaves = append(shardLeaves, merkle.Leaf{
+			Key: int64Key(shardID), Payload: ShardCommitmentPayload(shardCommitment),
+		})
+	}
+	shardTree, err := merkle.Build(commitment.ShardSettlementLeafDomain, shardLeaves)
+	if err != nil {
+		return nil, fmt.Errorf("build global shard settlement tree: %w", err)
+	}
+	if shardTree.Root() != proposal.Header.ShardSettlementRoot {
+		return nil, ErrInvalidSettlement
+	}
+
+	packages := make([]model.SettlementPackage, 0, len(proposal.Sidecar.ShardSettlements))
+	for _, shardID := range shardIDs {
+		data := proofData[shardID]
+		shardProof, proofErr := shardTree.Proof(int64Key(shardID))
+		if proofErr != nil {
+			return nil, proofErr
+		}
+		for _, settlement := range byShard[shardID] {
+			chunkProof, proofErr := data.tree.Proof(uint32Key(settlement.ChunkIndex))
+			if proofErr != nil {
+				return nil, proofErr
+			}
+			packages = append(packages, model.SettlementPackage{
+				Header: proposal.Header, Settlement: settlement.Clone(), ChunkProof: chunkProof,
+				ShardCommitment: data.commitment, ShardProof: shardProof,
+			})
+		}
+	}
+
+	return packages, nil
 }
 
 func canonicalCuts(input []model.ShardCut) ([]model.ShardCut, []int64, error) {

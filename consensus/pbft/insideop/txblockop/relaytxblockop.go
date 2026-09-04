@@ -112,7 +112,7 @@ func (r *RelayTxBlockOp) modifyTxRelayOpt(
 	shardID := r.c.GetShardID()
 
 	for _, tx := range txs {
-		if tx.TxType() == transaction.IntentSubmitTxType {
+		if tx.TxType() == transaction.IntentSubmitTxType || tx.TxType() == transaction.SettlementTxType {
 			modifiedTxs = append(modifiedTxs, tx)
 			continue
 		}
@@ -181,7 +181,7 @@ func (r *RelayTxBlockOp) splitTxs(
 	)
 
 	for _, tx := range txs {
-		if tx.TxType() == transaction.IntentSubmitTxType {
+		if tx.TxType() == transaction.IntentSubmitTxType || tx.TxType() == transaction.SettlementTxType {
 			continue
 		}
 

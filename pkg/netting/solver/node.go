@@ -112,7 +112,7 @@ func (n *Node) Step(ctx context.Context) error {
 	return n.dispatchPending(ctx)
 }
 
-func (n *Node) HandleMessage(_ context.Context, wrapped *rpcserver.WrappedMsg) error {
+func (n *Node) HandleMessage(ctx context.Context, wrapped *rpcserver.WrappedMsg) error {
 	switch wrapped.GetMsgType() {
 	case message.FinalizedBlockReceiptMessageType:
 		var msg message.FinalizedBlockReceiptMsg
@@ -125,7 +125,7 @@ func (n *Node) HandleMessage(_ context.Context, wrapped *rpcserver.WrappedMsg) e
 		if err := gob.NewDecoder(bytes.NewReader(wrapped.GetPayload())).Decode(&msg); err != nil {
 			return fmt.Errorf("decode finalized MatchRoot: %w", err)
 		}
-		return n.HandleFinalized(msg)
+		return n.HandleFinalized(ctx, msg)
 	default:
 		return nil
 	}
@@ -161,16 +161,46 @@ func (n *Node) PendingBatchIDs() []merkle.Hash {
 	return append([]merkle.Hash(nil), n.pending...)
 }
 
-func (n *Node) HandleFinalized(msg message.MatchRootFinalizedMsg) error {
+func (n *Node) HandleFinalized(ctx context.Context, msg message.MatchRootFinalizedMsg) error {
 	if msg.NodeID != 0 {
 		return fmt.Errorf("finalized MatchRoot is not from Beacon leader: node %d", msg.NodeID)
 	}
 	if len(n.pending) == 0 || n.pending[0] != msg.Header.BatchID {
 		return fmt.Errorf("unexpected finalized batch %s", msg.Header.BatchID.String())
 	}
+	proposal, err := n.store.GetProposal(msg.Header.BatchID)
+	if err != nil {
+		return err
+	}
+	if proposal.Header.BatchID != msg.Header.BatchID || proposal.Header.MatchRoot != msg.Header.MatchRoot {
+		return fmt.Errorf("finalized header differs from submitted batch %s", msg.Header.BatchID.String())
+	}
+	if err = n.sendSettlementPackages(ctx, proposal); err != nil {
+		return err
+	}
 	n.pending = n.pending[1:]
 
 	return n.store.SaveState(n.snapshot())
+}
+
+func (n *Node) sendSettlementPackages(ctx context.Context, proposal model.BatchProposal) error {
+	packages, err := batch.BuildSettlementPackages(proposal)
+	if err != nil {
+		return fmt.Errorf("build settlement packages: %w", err)
+	}
+	for _, pack := range packages {
+		leader, resolveErr := n.resolver.GetLeader(pack.Settlement.ShardID)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve shard %d leader: %w", pack.Settlement.ShardID, resolveErr)
+		}
+		wrapped, wrapErr := message.WrapMsg(&message.SettlementPackageMsg{NodeID: 0, Package: pack})
+		if wrapErr != nil {
+			return fmt.Errorf("wrap shard %d settlement: %w", pack.Settlement.ShardID, wrapErr)
+		}
+		n.conn.SendMsg2Dest(ctx, leader, wrapped)
+	}
+
+	return nil
 }
 
 func (n *Node) initializeManager() error {

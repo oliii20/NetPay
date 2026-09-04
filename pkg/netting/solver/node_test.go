@@ -25,7 +25,8 @@ func TestSolverBootstrapsBuildsAndRestoresBatch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "solver.db")
 	store, err := batchstore.Open(path)
 	require.NoError(t, err)
-	conn := network.NewConnHandler(&testP2P{})
+	p2p := &testP2P{}
+	conn := network.NewConnHandler(p2p)
 	resolver := testResolver{}
 	cfg := solver.Config{
 		ShardCount: 2, BatchSize: 2, MaxWindowDuration: time.Minute, TickInterval: time.Millisecond,
@@ -53,6 +54,14 @@ func TestSolverBootstrapsBuildsAndRestoresBatch(t *testing.T) {
 	restarted, err := solver.New(cfg, conn, resolver, store)
 	require.NoError(t, err)
 	require.Equal(t, pending, restarted.PendingBatchIDs())
+	require.NoError(t, restarted.HandleFinalized(context.Background(), message.MatchRootFinalizedMsg{
+		NodeID: 0, Header: proposal.Header,
+	}))
+	require.Empty(t, restarted.PendingBatchIDs())
+	require.Len(t, p2p.sent, 2)
+	for _, sent := range p2p.sent {
+		require.Equal(t, message.SettlementPackageMessageType, sent.GetMsgType())
+	}
 }
 
 func TestSolverRejectsNonLeaderAndInvalidShard(t *testing.T) {
@@ -72,12 +81,16 @@ func TestSolverRejectsNonLeaderAndInvalidShard(t *testing.T) {
 	require.ErrorIs(t, err, solver.ErrInvalidReceiptShard)
 }
 
-type testP2P struct{}
+type testP2P struct {
+	sent []*rpcserver.WrappedMsg
+}
 
-func (*testP2P) ListenStart() error                                                     { return nil }
-func (*testP2P) DrainMsgBuffer() []*rpcserver.WrappedMsg                                { return nil }
-func (*testP2P) SendMsg2Dest(context.Context, nodetopo.NodeInfo, *rpcserver.WrappedMsg) {}
-func (*testP2P) Close()                                                                 {}
+func (*testP2P) ListenStart() error                      { return nil }
+func (*testP2P) DrainMsgBuffer() []*rpcserver.WrappedMsg { return nil }
+func (p *testP2P) SendMsg2Dest(_ context.Context, _ nodetopo.NodeInfo, msg *rpcserver.WrappedMsg) {
+	p.sent = append(p.sent, msg)
+}
+func (*testP2P) Close() {}
 
 type testResolver struct{}
 

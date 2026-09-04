@@ -22,6 +22,8 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/bloom"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/partition"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/storage"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/utils"
@@ -45,10 +47,11 @@ type Chain struct {
 	shardID   int64
 	epochID   int64
 
-	cfg          config.BlockchainCfg
-	vmChainCfg   *params.ChainConfig
-	contractExec ContractExec
-	mux          sync.Mutex
+	cfg            config.BlockchainCfg
+	vmChainCfg     *params.ChainConfig
+	contractExec   ContractExec
+	confirmedRoots map[merkle.Hash]model.MatchRootBlockBody
+	mux            sync.Mutex
 }
 
 // NewChain creates a new blockchain data structure with given components.
@@ -67,9 +70,10 @@ func NewChain(cfg config.BlockchainCfg, lp config.LocalParams) (*Chain, error) {
 		epochID:   0,
 		shardID:   lp.ShardID,
 
-		cfg:          cfg,
-		vmChainCfg:   &vmChainCfg,
-		contractExec: NewEVMContractExecutor(),
+		cfg:            cfg,
+		vmChainCfg:     &vmChainCfg,
+		contractExec:   NewEVMContractExecutor(),
+		confirmedRoots: make(map[merkle.Hash]model.MatchRootBlockBody),
 	}
 
 	genesisBlock, err := chain.initWithGenesisBlock()
@@ -513,6 +517,10 @@ func (c *Chain) txExecute(
 	case transaction.IntentSubmitTxType:
 		if err := c.intentTxExecute(v, tx); err != nil {
 			return fmt.Errorf("execute payment intent failed: %w", err)
+		}
+	case transaction.SettlementTxType:
+		if err := c.settlementTxExecute(v, tx); err != nil {
+			return fmt.Errorf("execute settlement failed: %w", err)
 		}
 	case transaction.CreateContractTxType:
 		contractAddr, _, err := c.contractExec.CreateContractTxExecute(v, bCtx, tx)

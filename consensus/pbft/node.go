@@ -20,6 +20,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/txpool"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/csvwrite"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/settlement"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network/rpcserver"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
@@ -145,6 +146,9 @@ func NewPBFTNode(
 		iop = insideop.NewDynamicShardOp(conn, r, bc, txp, amm, tbo, cfg, lp)
 	default:
 		return nil, fmt.Errorf("invalid consensus type=%s", cfg.ConsensusType)
+	}
+	if cfg.NettingCfg.Enabled {
+		omh = outsideop.NewNettingOutsideOp(omh, settlement.NewInbox(lp.ShardID, bc, txp))
 	}
 
 	return &Node{

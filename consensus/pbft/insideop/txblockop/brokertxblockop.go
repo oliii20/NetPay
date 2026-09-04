@@ -129,7 +129,7 @@ func (bto *BrokerTxBlockOp) splitTxs(
 	)
 
 	for _, tx := range txs {
-		if tx.TxType() == transaction.IntentSubmitTxType {
+		if tx.TxType() == transaction.IntentSubmitTxType || tx.TxType() == transaction.SettlementTxType {
 			continue
 		}
 

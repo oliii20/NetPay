@@ -17,6 +17,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 )
 
 const (
@@ -156,6 +157,33 @@ func (r *Registry) NextNonce(sender account.Address) uint64 {
 
 func (r *Registry) EscrowBalance() *uint256.Int {
 	return new(uint256.Int).Set(r.state.GetBalance(common.Address(EscrowAccountAddress)))
+}
+
+func (r *Registry) Consume(result model.IntentResult, batchID merkle.Hash) error {
+	if err := result.Validate(); err != nil {
+		return fmt.Errorf("validate consumed result: %w", err)
+	}
+	reservation, err := r.Get(result.Intent)
+	if err != nil {
+		return err
+	}
+	if reservation.Status != ReservationReserved {
+		return fmt.Errorf("%w: got %d, want %d", ErrInvalidStatus, reservation.Status, ReservationReserved)
+	}
+	if reservation.Amount.Cmp(result.Intent.Amount) != 0 || reservation.Nonce != result.Intent.Nonce {
+		return fmt.Errorf("reservation differs from intent %x", result.IntentID)
+	}
+	r.ensureRegistryAccount()
+	r.setIntentValue(matchedSlotDomain, result.IntentID, common.BigToHash(result.MatchedAmount))
+	r.setIntentValue(fallbackSlotDomain, result.IntentID, common.BigToHash(result.FallbackAmount))
+	r.setIntentValue(batchSlotDomain, result.IntentID, common.Hash(batchID))
+	r.setIntentValue(
+		statusSlotDomain,
+		result.IntentID,
+		common.BigToHash(new(big.Int).SetUint64(uint64(ReservationConsumed))),
+	)
+
+	return nil
 }
 
 func (r *Registry) status(id intent.ID) (ReservationStatus, error) {

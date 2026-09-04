@@ -6,6 +6,7 @@ const (
 	FinalizedBlockReceiptMessageType = "FinalizedBlockReceipt"
 	BatchProposalMessageType         = "BatchProposal"
 	MatchRootFinalizedMessageType    = "MatchRootFinalized"
+	SettlementPackageMessageType     = "SettlementPackage"
 )
 
 type FinalizedBlockReceiptMsg struct {
@@ -21,4 +22,9 @@ type BatchProposalMsg struct {
 type MatchRootFinalizedMsg struct {
 	NodeID int64
 	Header model.MatchRootBlockBody
+}
+
+type SettlementPackageMsg struct {
+	NodeID  int64
+	Package model.SettlementPackage
 }

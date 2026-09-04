@@ -53,6 +53,24 @@ type BatchProposal struct {
 	Sidecar BatchSidecar
 }
 
+type SettlementPackage struct {
+	Header          MatchRootBlockBody
+	Settlement      ShardSettlement
+	ChunkProof      merkle.Proof
+	ShardCommitment ShardCommitment
+	ShardProof      merkle.Proof
+}
+
+func (p SettlementPackage) Clone() SettlementPackage {
+	cloned := p
+	cloned.Header.Cuts = append([]ShardCut(nil), p.Header.Cuts...)
+	cloned.Settlement = p.Settlement.Clone()
+	cloned.ChunkProof.Steps = append([]merkle.Step(nil), p.ChunkProof.Steps...)
+	cloned.ShardProof.Steps = append([]merkle.Step(nil), p.ShardProof.Steps...)
+
+	return cloned
+}
+
 func (p BatchProposal) Clone() BatchProposal {
 	cloned := p
 	cloned.Header.Cuts = append([]ShardCut(nil), p.Header.Cuts...)

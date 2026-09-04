@@ -3,7 +3,11 @@
 package transaction
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/gob"
+	"fmt"
+	"io"
 	"math/big"
 	"time"
 
@@ -11,6 +15,7 @@ import (
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 )
 
 const (
@@ -52,6 +57,7 @@ type Transaction struct {
 	RelayTxOpt  // the optional setting only for relay transactions.
 	BrokerTxOpt // the optional setting only for broker transactions.
 	IntentTxOpt // the optional setting only for payment-intent transactions.
+	SettlementTxOpt
 }
 
 type RelayTxOpt struct {
@@ -70,6 +76,10 @@ type BrokerTxOpt struct {
 
 type IntentTxOpt struct {
 	Intent *intent.PaymentIntent `rlp:"nil"`
+}
+
+type SettlementTxOpt struct {
+	Settlement *model.SettlementPackage `rlp:"nil"`
 }
 
 func NewTransaction(
@@ -109,10 +119,67 @@ func NewIntentTransaction(payment intent.PaymentIntent, proposeTime time.Time) *
 	}
 }
 
+func NewSettlementTransaction(settlement model.SettlementPackage, proposeTime time.Time) *Transaction {
+	cloned := settlement.Clone()
+
+	return &Transaction{
+		Value:           new(big.Int),
+		PriorityFee:     new(big.Int),
+		CreateTime:      proposeTime,
+		GasLimit:        defaultGasLimit,
+		SettlementTxOpt: SettlementTxOpt{Settlement: &cloned},
+	}
+}
+
 // Encode encodes transactions.
 // Transaction encode should be prepare
 func (tx *Transaction) Encode() ([]byte, error) {
 	return rlp.EncodeToBytes(tx)
+}
+
+// EncodeRLP keeps the legacy transaction fields explicit and commits the
+// settlement package as a deterministic opaque payload. This avoids exposing
+// signed shard identifiers to go-ethereum's unsigned-only RLP reflection.
+func (tx *Transaction) EncodeRLP(writer io.Writer) error {
+	var settlementBytes []byte
+	if tx.Settlement != nil {
+		var out bytes.Buffer
+		if err := gob.NewEncoder(&out).Encode(tx.Settlement); err != nil {
+			return fmt.Errorf("encode settlement transaction: %w", err)
+		}
+		settlementBytes = out.Bytes()
+	}
+	type rlpTransaction struct {
+		Sender                    account.Address
+		Recipient                 account.Address
+		Value                     *big.Int
+		PriorityFee               *big.Int
+		Nonce                     uint64
+		Signature                 Signature
+		CreateTime                time.Time
+		Data                      []byte
+		GasLimit                  uint64
+		RelayStage                uint
+		ROriginalHash             []byte
+		BrokerStage               uint
+		Broker                    account.Address
+		BOriginalHash             []byte
+		OriginalTxCreateTime      time.Time
+		NonceBroker               uint64
+		HeightLock, HeightCurrent uint64
+		Intent                    *intent.PaymentIntent `rlp:"nil"`
+		Settlement                []byte
+	}
+
+	return rlp.Encode(writer, rlpTransaction{
+		Sender: tx.Sender, Recipient: tx.Recipient, Value: tx.Value, PriorityFee: tx.PriorityFee,
+		Nonce: tx.Nonce, Signature: tx.Signature, CreateTime: tx.CreateTime, Data: tx.Data,
+		GasLimit: tx.GasLimit, RelayStage: tx.RelayStage, ROriginalHash: tx.ROriginalHash,
+		BrokerStage: tx.BrokerStage, Broker: tx.Broker, BOriginalHash: tx.BOriginalHash,
+		OriginalTxCreateTime: tx.OriginalTxCreateTime, NonceBroker: tx.NonceBroker,
+		HeightLock: tx.HeightLock, HeightCurrent: tx.HeightCurrent, Intent: tx.Intent,
+		Settlement: settlementBytes,
+	})
 }
 
 func (tx *Transaction) Hash() ([]byte, error) {
@@ -128,6 +195,9 @@ func (tx *Transaction) Hash() ([]byte, error) {
 
 // TxType returns the type of a transaction by its variables.
 func (tx *Transaction) TxType() byte {
+	if tx.Settlement != nil {
+		return SettlementTxType
+	}
 	if tx.Intent != nil {
 		return IntentSubmitTxType
 	}
