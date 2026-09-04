@@ -112,6 +112,10 @@ consensus_node:
   block_record_dir: "./exp/block_record/"
   ### -----------------------------------------------------------------------------------
 
+netting:
+  # Netting nodes and receipt publication are disabled for legacy experiments.
+  enabled: false
+
 supervisor:
   ### -----------------------------------------------------------------------------------
   ### `tx_number` is the number of transactions to be injected to the system by the supervisor.

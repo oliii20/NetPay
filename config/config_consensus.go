@@ -28,8 +28,13 @@ type SupervisorCfg struct {
 type ConsensusNodeCfg struct {
 	BlockchainCfg  `       json:"blockchain"       yaml:"blockchain"`
 	TxPoolCfg      `       json:"tx_pool"          yaml:"tx_pool"`
-	BlockInterval  int64  `json:"block_interval"   yaml:"block_interval"` // ms
-	BlockRecordDir string `json:"block_record_dir" yaml:"block_record_dir"`
+	NettingCfg     NettingCfg `json:"-" yaml:"-"`
+	BlockInterval  int64      `json:"block_interval"   yaml:"block_interval"` // ms
+	BlockRecordDir string     `json:"block_record_dir" yaml:"block_record_dir"`
+}
+
+type NettingCfg struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
 }
 
 type TxSourceCfg struct {

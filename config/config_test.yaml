@@ -39,6 +39,9 @@ supervisor:
     broker_file_path: "./pkg/broker/broker"
     broker_num: 50
 
+netting:
+  enabled: true
+
 network:
   bandwidth: 1000000
   latency: 0

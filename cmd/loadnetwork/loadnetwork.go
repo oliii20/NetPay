@@ -159,7 +159,7 @@ func readIpTableFromFile(cfg config.SystemCfg) (map[nodetopo.NodeInfo]string, er
 
 	for shardID, shardInfoMap := range ipMap {
 		// Skip the invalid shardID
-		if shardID != nodetopo.SupervisorShardID && (shardID >= cfg.ShardNum || shardID < 0) {
+		if !nodetopo.IsSystemShardID(shardID) && (shardID >= cfg.ShardNum || shardID < 0) {
 			continue
 		}
 

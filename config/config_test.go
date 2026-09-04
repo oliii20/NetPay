@@ -19,6 +19,9 @@ var expectedSystemCfg = SystemCfg{
 
 var expectedCfg = Config{
 	GlobalSys: expectedSystemCfg,
+	NettingCfg: NettingCfg{
+		Enabled: true,
+	},
 	ConsensusNodeCfg: ConsensusNodeCfg{
 		BlockchainCfg: BlockchainCfg{
 			SystemCfg: expectedSystemCfg,
@@ -41,6 +44,9 @@ var expectedCfg = Config{
 		},
 		TxPoolCfg: TxPoolCfg{
 			Type: "number",
+		},
+		NettingCfg: NettingCfg{
+			Enabled: true,
 		},
 		BlockInterval:  5000,
 		BlockRecordDir: "./exp_test/block_record/",

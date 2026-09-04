@@ -53,6 +53,8 @@ func getMsgType(msg any) (string, error) {
 		msgType = CatchupReqMessageType
 	case *CatchupRespMsg, CatchupRespMsg:
 		msgType = CatchupRespMessageType
+	case *FinalizedBlockReceiptMsg, FinalizedBlockReceiptMsg:
+		msgType = FinalizedBlockReceiptMessageType
 
 	case *RelayBlockInfoMsg, RelayBlockInfoMsg:
 		msgType = RelayBlockInfoMessageType

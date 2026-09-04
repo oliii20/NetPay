@@ -11,6 +11,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/receipt"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
 )
@@ -20,6 +21,7 @@ type BrokerTxBlockOp struct {
 	c        *chain.Chain
 	conn     *network.ConnHandler
 	resolver nodetopo.NodeMapper
+	receipts *receipt.Publisher
 
 	cfg config.ConsensusNodeCfg
 	lp  config.LocalParams
@@ -32,7 +34,14 @@ func NewBrokerTxBlockOp(
 	cfg config.ConsensusNodeCfg,
 	lp config.LocalParams,
 ) *BrokerTxBlockOp {
-	return &BrokerTxBlockOp{c: c, conn: conn, resolver: rs, cfg: cfg, lp: lp}
+	return &BrokerTxBlockOp{
+		c:        c,
+		conn:     conn,
+		resolver: rs,
+		receipts: receipt.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
+		cfg:      cfg,
+		lp:       lp,
+	}
 }
 
 func (bto *BrokerTxBlockOp) BuildTxBlockProposal(
@@ -70,6 +79,9 @@ func (bto *BrokerTxBlockOp) BlockCommitAndDeliver(ctx context.Context, isLeader 
 	// if this node is not the leader, skip it
 	if !isLeader {
 		return nil
+	}
+	if err := bto.receipts.Publish(ctx, bto.c.GetShardID(), bto.c.GetEpochID(), b, time.Now()); err != nil {
+		return fmt.Errorf("publish finalized block receipt: %w", err)
 	}
 
 	innerTxs, b1Txs, b2Txs, r1Txs, r2Txs := bto.splitTxs(ctx, b.TxList)

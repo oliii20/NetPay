@@ -18,6 +18,7 @@ type Config struct {
 	ConsensusNodeCfg `          json:"consensus_node" yaml:"consensus_node"`
 	SupervisorCfg    `          json:"supervisor"     yaml:"supervisor"`
 	NetworkCfg       `          json:"network"        yaml:"network"`
+	NettingCfg       `          json:"netting"        yaml:"netting"`
 }
 
 type LocalParams struct {
@@ -63,6 +64,7 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.SystemCfg = cfg.GlobalSys
 	// pass the global system config to the consensus config
 	cfg.ConsensusNodeCfg.SystemCfg = cfg.GlobalSys
+	cfg.ConsensusNodeCfg.NettingCfg = cfg.NettingCfg
 
 	return cfg, nil
 }
