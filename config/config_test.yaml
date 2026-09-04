@@ -41,6 +41,7 @@ supervisor:
 
 netting:
   enabled: true
+  metrics_enabled: true
   batch_size: 100
   max_window_duration_ms: 2000
   solver_tick_interval_ms: 100

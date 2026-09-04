@@ -55,6 +55,8 @@ func TestManagerClosesAtGlobalBatchSizeWithVectorCut(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sealed)
 	require.Equal(t, uint64(1), sealed.WindowID)
+	require.Equal(t, "batch_size", sealed.CloseReason)
+	require.Equal(t, 1, manager.FrozenWindowCount())
 	require.Len(t, sealed.Intents, 3)
 	require.Len(t, sealed.Receipts, 2)
 	require.Equal(t, []model.ShardCut{
@@ -86,6 +88,7 @@ func TestManagerDoesNotStartTimerForEmptyBlocks(t *testing.T) {
 
 	sealed = manager.TryClose()
 	require.NotNil(t, sealed)
+	require.Equal(t, "max_window_duration", sealed.CloseReason)
 	require.Equal(t, uint64(3), sealed.Cuts[0].EndHeight)
 	require.Len(t, sealed.Receipts, 2)
 }

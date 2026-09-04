@@ -44,12 +44,13 @@ type Watermark struct {
 }
 
 type FrozenWindow struct {
-	WindowID uint64
-	OpenedAt time.Time
-	SealedAt time.Time
-	Cuts     []model.ShardCut
-	Receipts []model.FinalizedBlockReceipt
-	Intents  []intent.PaymentIntent
+	WindowID    uint64
+	OpenedAt    time.Time
+	SealedAt    time.Time
+	CloseReason string
+	Cuts        []model.ShardCut
+	Receipts    []model.FinalizedBlockReceipt
+	Intents     []intent.PaymentIntent
 }
 
 type Manager struct {
@@ -154,7 +155,11 @@ func (m *Manager) TryClose() *FrozenWindow {
 		return nil
 	}
 
-	window := m.seal()
+	reason := "max_window_duration"
+	if sizeReady {
+		reason = "batch_size"
+	}
+	window := m.seal(reason)
 	cloned := cloneFrozenWindow(window)
 
 	return &cloned
@@ -162,6 +167,10 @@ func (m *Manager) TryClose() *FrozenWindow {
 
 func (m *Manager) PendingIntentCount() int {
 	return len(m.pending)
+}
+
+func (m *Manager) FrozenWindowCount() int {
+	return len(m.frozen)
 }
 
 func (m *Manager) Watermark(shardID int64) (Watermark, error) {
@@ -277,15 +286,16 @@ func (m *Manager) dropBuffered(stream *StreamState, height uint64) {
 	delete(stream.SeenHashes, height)
 }
 
-func (m *Manager) seal() FrozenWindow {
+func (m *Manager) seal(closeReason string) FrozenWindow {
 	now := m.clock.Now()
 	window := FrozenWindow{
-		WindowID: m.nextWindowID,
-		OpenedAt: *m.openedAt,
-		SealedAt: now,
-		Cuts:     make([]model.ShardCut, 0, m.cfg.ShardCount),
-		Receipts: make([]model.FinalizedBlockReceipt, 0),
-		Intents:  sortedPendingIntents(m.pending),
+		WindowID:    m.nextWindowID,
+		OpenedAt:    *m.openedAt,
+		SealedAt:    now,
+		CloseReason: closeReason,
+		Cuts:        make([]model.ShardCut, 0, m.cfg.ShardCount),
+		Receipts:    make([]model.FinalizedBlockReceipt, 0),
+		Intents:     sortedPendingIntents(m.pending),
 	}
 
 	for shardID := range m.cfg.ShardCount {

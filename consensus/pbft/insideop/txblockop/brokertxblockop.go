@@ -12,6 +12,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/fallback"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/metrics"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/receipt"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
@@ -24,6 +25,7 @@ type BrokerTxBlockOp struct {
 	resolver  nodetopo.NodeMapper
 	receipts  *receipt.Publisher
 	fallbacks *fallback.Publisher
+	metrics   *metrics.Publisher
 
 	cfg config.ConsensusNodeCfg
 	lp  config.LocalParams
@@ -42,8 +44,11 @@ func NewBrokerTxBlockOp(
 		resolver:  rs,
 		receipts:  receipt.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
 		fallbacks: fallback.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, c, conn, rs),
-		cfg:       cfg,
-		lp:        lp,
+		metrics: metrics.NewPublisher(
+			cfg.NettingCfg.Enabled && cfg.NettingCfg.MetricsEnabled, lp.NodeID, conn, rs,
+		),
+		cfg: cfg,
+		lp:  lp,
 	}
 }
 
@@ -83,11 +88,15 @@ func (bto *BrokerTxBlockOp) BlockCommitAndDeliver(ctx context.Context, isLeader 
 	if !isLeader {
 		return nil
 	}
-	if err := bto.receipts.Publish(ctx, bto.c.GetShardID(), bto.c.GetEpochID(), b, time.Now()); err != nil {
+	committedAt := time.Now()
+	if err := bto.receipts.Publish(ctx, bto.c.GetShardID(), bto.c.GetEpochID(), b, committedAt); err != nil {
 		return fmt.Errorf("publish finalized block receipt: %w", err)
 	}
 	if err := bto.fallbacks.PublishAfterBlock(ctx, b); err != nil {
 		return fmt.Errorf("publish reserved fallback: %w", err)
+	}
+	if err := bto.metrics.PublishCommittedBlock(ctx, bto.c.GetShardID(), b, committedAt); err != nil {
+		slog.WarnContext(ctx, "publish netting execution metrics failed", "err", err)
 	}
 
 	innerTxs, b1Txs, b2Txs, r1Txs, r2Txs := bto.splitTxs(ctx, b.TxList)

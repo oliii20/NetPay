@@ -15,6 +15,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/committee"
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure"
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure/brokerstats"
+	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure/nettingstats"
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure/relaystats"
 )
 
@@ -83,6 +84,9 @@ func NewSupervisor(conn *network.ConnHandler, r nodetopo.NodeMapper, cfg config.
 		}
 	default:
 		return nil, fmt.Errorf("undefined consensus type: %s", cfg.ConsensusType)
+	}
+	if cfg.NettingCfg.Enabled && cfg.NettingCfg.MetricsEnabled {
+		ms = measure.NewRouter(ms, nettingstats.New(cfg.ResultOutputDir))
 	}
 
 	// create and valid cfg output path

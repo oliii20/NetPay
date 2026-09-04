@@ -32,7 +32,7 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	}
 	previous := hash(0xaa)
 
-	proposal, err := (batch.Builder{}).Build(frozen, previous)
+	proposal, metric, err := (batch.Builder{}).BuildMeasured(frozen, previous)
 	require.NoError(t, err)
 	require.Equal(t, uint64(3), proposal.Header.WindowID)
 	require.Equal(t, previous, proposal.Header.PreviousBatchID)
@@ -41,6 +41,19 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	require.Equal(t, int64(0), proposal.Header.Cuts[0].ShardID)
 	require.Len(t, proposal.Sidecar.IntentResults, 2)
 	require.Len(t, proposal.Sidecar.ShardSettlements, 2)
+	require.Equal(t, proposal.Header.BatchID, metric.BatchID)
+	require.Equal(t, uint64(3), metric.WindowID)
+	require.Equal(t, 2, metric.IntentCount)
+	require.Equal(t, uint64(0), metric.WatermarkSkew)
+	require.Equal(t, time.Second, metric.WindowOpenDuration)
+	require.Equal(t, 2, metric.BestFitMatchedIntentCount)
+	require.Equal(t, 2, metric.MatchedIntentCount)
+	require.Equal(t, 1, metric.FallbackIntentCount)
+	require.Equal(t, "17", metric.OriginalValue)
+	require.Equal(t, "14", metric.MatchedValue)
+	require.Equal(t, "3", metric.FallbackValue)
+	require.Positive(t, metric.MatchTime)
+	require.Positive(t, metric.MerkleBuildTime)
 
 	bySource := make(map[int64]model.IntentResult)
 	for _, result := range proposal.Sidecar.IntentResults {

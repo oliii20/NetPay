@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"time"
 
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/commitment"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/matcher"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
@@ -30,35 +32,48 @@ var (
 type Builder struct{}
 
 func (Builder) Build(frozen window.FrozenWindow, previousBatchID merkle.Hash) (model.BatchProposal, error) {
+	proposal, _, err := (Builder{}).BuildMeasured(frozen, previousBatchID)
+
+	return proposal, err
+}
+
+func (Builder) BuildMeasured(
+	frozen window.FrozenWindow,
+	previousBatchID merkle.Hash,
+) (model.BatchProposal, model.NettingBatchMetric, error) {
 	if len(frozen.Intents) == 0 {
-		return model.BatchProposal{}, ErrEmptyWindow
+		return model.BatchProposal{}, model.NettingBatchMetric{}, ErrEmptyWindow
 	}
 
 	cuts, shardIDs, err := canonicalCuts(frozen.Cuts)
 	if err != nil {
-		return model.BatchProposal{}, err
+		return model.BatchProposal{}, model.NettingBatchMetric{}, err
 	}
+	matchStarted := time.Now()
 	matchOutput, err := matcher.Match(frozen.Intents)
 	if err != nil {
-		return model.BatchProposal{}, fmt.Errorf("match frozen window %d: %w", frozen.WindowID, err)
+		return model.BatchProposal{}, model.NettingBatchMetric{}, fmt.Errorf("match frozen window %d: %w", frozen.WindowID, err)
 	}
+	matchTime := time.Since(matchStarted)
 	results := sortedResults(matchOutput.Results)
 
+	merkleStarted := time.Now()
 	settlements, shardLeaves, err := buildSettlements(frozen.WindowID, shardIDs, results)
 	if err != nil {
-		return model.BatchProposal{}, err
+		return model.BatchProposal{}, model.NettingBatchMetric{}, err
 	}
 	roots, err := commitment.BuildRoots(cutLeaves(cuts), resultLeaves(results), shardLeaves)
 	if err != nil {
-		return model.BatchProposal{}, fmt.Errorf("build batch roots: %w", err)
+		return model.BatchProposal{}, model.NettingBatchMetric{}, fmt.Errorf("build batch roots: %w", err)
 	}
+	merkleBuildTime := time.Since(merkleStarted)
 	matchRoot := commitment.MatchRoot(roots)
 	batchID := commitment.BatchID(previousBatchID, frozen.WindowID, matchRoot)
 	for idx := range settlements {
 		settlements[idx].BatchID = batchID
 	}
 
-	return model.BatchProposal{
+	proposal := model.BatchProposal{
 		Header: model.MatchRootBlockBody{
 			BatchID:             batchID,
 			PreviousBatchID:     previousBatchID,
@@ -74,7 +89,77 @@ func (Builder) Build(frozen window.FrozenWindow, previousBatchID merkle.Hash) (m
 			IntentResults:    results,
 			ShardSettlements: settlements,
 		},
-	}, nil
+	}
+	metric := summarizeBatchMetric(frozen, proposal.Header.BatchID, matchOutput, matchTime, merkleBuildTime)
+
+	return proposal, metric, nil
+}
+
+func summarizeBatchMetric(
+	frozen window.FrozenWindow,
+	batchID merkle.Hash,
+	output matcher.Output,
+	matchTime, merkleBuildTime time.Duration,
+) model.NettingBatchMetric {
+	metric := model.NettingBatchMetric{
+		BatchID: batchID, WindowID: frozen.WindowID, CloseReason: frozen.CloseReason,
+		IntentCount: len(frozen.Intents), WindowOpenDuration: frozen.SealedAt.Sub(frozen.OpenedAt),
+		MatchTime: matchTime, MerkleBuildTime: merkleBuildTime, BuiltAt: time.Now(),
+		OriginalValue: "0", MatchedValue: "0", FallbackValue: "0",
+	}
+	if metric.CloseReason == "" {
+		metric.CloseReason = "unspecified"
+	}
+	metric.Shards, metric.WatermarkSkew = summarizeCuts(frozen.Cuts)
+	phaseIntents := map[matcher.Phase]map[intent.ID]struct{}{
+		matcher.ExactPhase: {}, matcher.BestFitPhase: {}, matcher.SplitPhase: {},
+	}
+	for _, allocation := range output.Allocations {
+		phaseIntents[allocation.Phase][allocation.LowerToHigherIntentID] = struct{}{}
+		phaseIntents[allocation.Phase][allocation.HigherToLowerIntentID] = struct{}{}
+		if allocation.Phase == matcher.SplitPhase {
+			metric.SplitAllocationCount++
+		}
+	}
+	metric.ExactMatchedIntentCount = len(phaseIntents[matcher.ExactPhase])
+	metric.BestFitMatchedIntentCount = len(phaseIntents[matcher.BestFitPhase])
+	metric.SplitMatchedIntentCount = len(phaseIntents[matcher.SplitPhase])
+	original, matched, fallback := new(big.Int), new(big.Int), new(big.Int)
+	for _, result := range output.Results {
+		original.Add(original, result.Intent.Amount)
+		matched.Add(matched, result.MatchedAmount)
+		fallback.Add(fallback, result.FallbackAmount)
+		if result.MatchedAmount.Sign() > 0 {
+			metric.MatchedIntentCount++
+		}
+		if result.FallbackAmount.Sign() > 0 {
+			metric.FallbackIntentCount++
+		}
+	}
+	metric.OriginalValue = original.String()
+	metric.MatchedValue = matched.String()
+	metric.FallbackValue = fallback.String()
+
+	return metric
+}
+
+func summarizeCuts(cuts []model.ShardCut) ([]model.ShardWindowMetric, uint64) {
+	shards := make([]model.ShardWindowMetric, len(cuts))
+	var minimum, maximum uint64
+	for idx, cut := range cuts {
+		shards[idx] = model.ShardWindowMetric{
+			ShardID: cut.ShardID, BlockCount: cut.EndHeight - cut.PreviousHeight, CutHeight: cut.EndHeight,
+		}
+		if idx == 0 || cut.EndHeight < minimum {
+			minimum = cut.EndHeight
+		}
+		if idx == 0 || cut.EndHeight > maximum {
+			maximum = cut.EndHeight
+		}
+	}
+	sort.Slice(shards, func(i, j int) bool { return shards[i].ShardID < shards[j].ShardID })
+
+	return shards, maximum - minimum
 }
 
 func BuildSettlementPackages(proposal model.BatchProposal) ([]model.SettlementPackage, error) {

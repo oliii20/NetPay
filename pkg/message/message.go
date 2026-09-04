@@ -72,6 +72,12 @@ func getMsgType(msg any) (string, error) {
 		msgType = FallbackTxMessageType
 	case *FallbackCompletedMsg, FallbackCompletedMsg:
 		msgType = FallbackCompletedMessageType
+	case *NettingBatchMetricMsg, NettingBatchMetricMsg:
+		msgType = NettingBatchMetricMessageType
+	case *NettingBeaconMetricMsg, NettingBeaconMetricMsg:
+		msgType = NettingBeaconMetricMessageType
+	case *NettingExecutionMetricMsg, NettingExecutionMetricMsg:
+		msgType = NettingExecutionMetricMessageType
 
 	case *RelayBlockInfoMsg, RelayBlockInfoMsg:
 		msgType = RelayBlockInfoMessageType

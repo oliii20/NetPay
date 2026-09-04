@@ -49,6 +49,9 @@ func main() {
 	defer func() { _ = store.Close() }()
 	conn := network.NewConnHandler(p2p)
 	op := beaconop.New(conn, resolver, store, cfg.ShardNum, lp.NodeID)
+	if cfg.MetricsEnabled {
+		op.EnableMetrics()
+	}
 	node, err := pbft.NewSpecialPBFTNode(conn, resolver, cfg.ConsensusNodeCfg, *lp, op, op)
 	if err != nil {
 		log.Fatal(fmt.Errorf("create Beacon PBFT node: %w", err))

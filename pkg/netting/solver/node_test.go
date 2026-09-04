@@ -1,7 +1,9 @@
 package solver_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -30,6 +32,7 @@ func TestSolverBootstrapsBuildsAndRestoresBatch(t *testing.T) {
 	resolver := testResolver{}
 	cfg := solver.Config{
 		ShardCount: 2, BatchSize: 2, MaxWindowDuration: time.Minute, TickInterval: time.Millisecond,
+		MetricsEnabled: true,
 	}
 	node, err := solver.New(cfg, conn, resolver, store)
 	require.NoError(t, err)
@@ -46,6 +49,14 @@ func TestSolverBootstrapsBuildsAndRestoresBatch(t *testing.T) {
 	proposal, err := store.GetProposal(pending[0])
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), proposal.Header.WindowID)
+	require.Len(t, p2p.sent, 1)
+	require.Equal(t, message.NettingBatchMetricMessageType, p2p.sent[0].GetMsgType())
+	var metricMsg message.NettingBatchMetricMsg
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(p2p.sent[0].GetPayload())).Decode(&metricMsg))
+	require.Equal(t, proposal.Header.BatchID, metricMsg.Metric.BatchID)
+	require.Equal(t, 2, metricMsg.Metric.IntentCount)
+	require.Positive(t, metricMsg.Metric.BatchProposalBytes)
+	require.Positive(t, metricMsg.Metric.SidecarBytes)
 	require.NoError(t, store.Close())
 
 	store, err = batchstore.Open(path)
@@ -58,8 +69,8 @@ func TestSolverBootstrapsBuildsAndRestoresBatch(t *testing.T) {
 		NodeID: 0, Header: proposal.Header,
 	}))
 	require.Empty(t, restarted.PendingBatchIDs())
-	require.Len(t, p2p.sent, 2)
-	for _, sent := range p2p.sent {
+	require.Len(t, p2p.sent, 3)
+	for _, sent := range p2p.sent[1:] {
 		require.Equal(t, message.SettlementPackageMessageType, sent.GetMsgType())
 	}
 }

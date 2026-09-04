@@ -16,6 +16,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batchstore"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/metrics"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/window"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
@@ -34,6 +35,7 @@ type Config struct {
 	BatchSize         int
 	MaxWindowDuration time.Duration
 	TickInterval      time.Duration
+	MetricsEnabled    bool
 }
 
 type Node struct {
@@ -46,6 +48,7 @@ type Node struct {
 	chainTip  merkle.Hash
 	pending   []merkle.Hash
 	builder   batch.Builder
+	metrics   *metrics.Publisher
 }
 
 func New(
@@ -66,6 +69,7 @@ func New(
 		resolver:  resolver,
 		store:     store,
 		bootstrap: make(map[int64][]model.FinalizedBlockReceipt),
+		metrics:   metrics.NewPublisher(cfg.MetricsEnabled, 0, conn, resolver),
 	}
 	state, found, err := store.LoadState()
 	if err != nil {
@@ -104,7 +108,7 @@ func (n *Node) Step(ctx context.Context) error {
 	}
 	if n.manager != nil {
 		n.manager.TryClose()
-		if err := n.drainFrozen(); err != nil {
+		if err := n.drainFrozen(ctx); err != nil {
 			return err
 		}
 	}
@@ -150,7 +154,7 @@ func (n *Node) HandleReceipt(msg message.FinalizedBlockReceiptMsg) error {
 	} else if _, err := n.manager.AddReceipt(msg.Receipt); err != nil {
 		return fmt.Errorf("add finalized receipt: %w", err)
 	}
-	if err := n.drainFrozen(); err != nil {
+	if err := n.drainFrozen(context.Background()); err != nil {
 		return err
 	}
 
@@ -242,7 +246,7 @@ func (n *Node) initializeManager() error {
 	return nil
 }
 
-func (n *Node) drainFrozen() error {
+func (n *Node) drainFrozen(ctx context.Context) error {
 	if n.manager == nil {
 		return nil
 	}
@@ -251,7 +255,7 @@ func (n *Node) drainFrozen() error {
 		if !ok {
 			return nil
 		}
-		proposal, err := n.builder.Build(*frozen, n.chainTip)
+		proposal, metric, err := n.builder.BuildMeasured(*frozen, n.chainTip)
 		if err != nil {
 			return fmt.Errorf("build window %d: %w", frozen.WindowID, err)
 		}
@@ -263,7 +267,28 @@ func (n *Node) drainFrozen() error {
 		if err = n.store.PutProposalAndState(proposal, n.snapshot()); err != nil {
 			return err
 		}
+		metric.FrozenWindowQueueLength = n.manager.FrozenWindowCount()
+		metric.BatchProposalBytes, err = encodedSize(message.BatchProposalMsg{NodeID: 0, Proposal: proposal})
+		if err != nil {
+			return fmt.Errorf("measure batch proposal bytes: %w", err)
+		}
+		metric.SidecarBytes, err = encodedSize(proposal.Sidecar)
+		if err != nil {
+			return fmt.Errorf("measure sidecar bytes: %w", err)
+		}
+		if err = n.metrics.PublishBatch(ctx, metric); err != nil {
+			slog.WarnContext(ctx, "publish batch metrics failed", "err", err)
+		}
 	}
+}
+
+func encodedSize(value any) (int, error) {
+	var out bytes.Buffer
+	if err := gob.NewEncoder(&out).Encode(value); err != nil {
+		return 0, err
+	}
+
+	return out.Len(), nil
 }
 
 func (n *Node) dispatchPending(ctx context.Context) error {

@@ -1,7 +1,9 @@
 package beaconop_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"math/big"
 	"path/filepath"
 	"sync"
@@ -29,6 +31,7 @@ func TestOpQueuesValidatesCommitsAndBroadcasts(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	p2p := &capturingP2P{}
 	op := beaconop.New(network.NewConnHandler(p2p), opResolver{}, store, 2, 0)
+	op.EnableMetrics()
 	proposal := opProposal(t)
 	wrapped, err := message.WrapMsg(&message.BatchProposalMsg{NodeID: 0, Proposal: proposal})
 	require.NoError(t, err)
@@ -45,9 +48,26 @@ func TestOpQueuesValidatesCommitsAndBroadcasts(t *testing.T) {
 	require.Equal(t, proposal.Header.BatchID, tip.Body.BatchID)
 	sentMessages := p2p.messages()
 	require.NotEmpty(t, sentMessages)
+	var metric model.NettingBeaconMetric
+	finalizedCount := 0
 	for _, sent := range sentMessages {
-		require.Equal(t, message.MatchRootFinalizedMessageType, sent.GetMsgType())
+		switch sent.GetMsgType() {
+		case message.MatchRootFinalizedMessageType:
+			finalizedCount++
+		case message.NettingBeaconMetricMessageType:
+			var payload message.NettingBeaconMetricMsg
+			require.NoError(t, gob.NewDecoder(bytes.NewReader(sent.GetPayload())).Decode(&payload))
+			metric = payload.Metric
+		default:
+			t.Fatalf("unexpected message type %s", sent.GetMsgType())
+		}
 	}
+	require.Equal(t, 4, finalizedCount)
+	require.Equal(t, proposal.Header.BatchID, metric.BatchID)
+	require.Positive(t, metric.PreprepareBytes)
+	require.Positive(t, metric.PrepareBytes)
+	require.Positive(t, metric.CommitBytes)
+	require.Positive(t, metric.MatchRootStorageBytes)
 }
 
 type capturingP2P struct {

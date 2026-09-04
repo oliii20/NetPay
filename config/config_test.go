@@ -21,6 +21,7 @@ var expectedCfg = Config{
 	GlobalSys: expectedSystemCfg,
 	NettingCfg: NettingCfg{
 		Enabled:              true,
+		MetricsEnabled:       true,
 		BatchSize:            100,
 		MaxWindowDurationMS:  2000,
 		SolverTickIntervalMS: 100,
@@ -52,6 +53,7 @@ var expectedCfg = Config{
 		},
 		NettingCfg: NettingCfg{
 			Enabled:              true,
+			MetricsEnabled:       true,
 			BatchSize:            100,
 			MaxWindowDurationMS:  2000,
 			SolverTickIntervalMS: 100,
@@ -62,6 +64,15 @@ var expectedCfg = Config{
 		BlockRecordDir: "./exp_test/block_record/",
 	},
 	SupervisorCfg: SupervisorCfg{
+		NettingCfg: NettingCfg{
+			Enabled:              true,
+			MetricsEnabled:       true,
+			BatchSize:            100,
+			MaxWindowDurationMS:  2000,
+			SolverTickIntervalMS: 100,
+			BatchStorePath:       "./exp_test/netting/solver.db",
+			BeaconStorePath:      "./exp_test/netting/beacon.db",
+		},
 		TxNumber:         100000,
 		TxInjectionSpeed: 10000,
 		ResultOutputDir:  "./exp_test/results/",

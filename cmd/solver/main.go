@@ -52,6 +52,7 @@ func main() {
 		BatchSize:         cfg.BatchSize,
 		MaxWindowDuration: time.Duration(cfg.MaxWindowDurationMS) * time.Millisecond,
 		TickInterval:      time.Duration(cfg.SolverTickIntervalMS) * time.Millisecond,
+		MetricsEnabled:    cfg.MetricsEnabled,
 	}, network.NewConnHandler(p2p), resolver, store)
 	if err != nil {
 		log.Fatal(fmt.Errorf("create solver: %w", err))

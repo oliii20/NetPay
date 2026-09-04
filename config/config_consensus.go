@@ -17,10 +17,11 @@ type SystemCfg struct {
 
 type SupervisorCfg struct {
 	SystemCfg
-	TxNumber         int64  `json:"tx_number"          yaml:"tx_number"`
-	TxInjectionSpeed int64  `json:"tx_injection_speed" yaml:"tx_injection_speed"` // transactions per second
-	ResultOutputDir  string `json:"result_output_dir"  yaml:"result_output_dir"`
-	EpochDuration    int64  `json:"epoch_duration"     yaml:"epoch_duration"`
+	NettingCfg       NettingCfg `json:"-" yaml:"-"`
+	TxNumber         int64      `json:"tx_number"          yaml:"tx_number"`
+	TxInjectionSpeed int64      `json:"tx_injection_speed" yaml:"tx_injection_speed"` // transactions per second
+	ResultOutputDir  string     `json:"result_output_dir"  yaml:"result_output_dir"`
+	EpochDuration    int64      `json:"epoch_duration"     yaml:"epoch_duration"`
 	TxSourceCfg      `       json:"tx_source"          yaml:"tx_source"`
 	BrokerModuleCfg  `       json:"broker_module"      yaml:"broker_module"`
 }
@@ -35,6 +36,7 @@ type ConsensusNodeCfg struct {
 
 type NettingCfg struct {
 	Enabled              bool   `json:"enabled"                yaml:"enabled"`
+	MetricsEnabled       bool   `json:"metrics_enabled"        yaml:"metrics_enabled"`
 	BatchSize            int    `json:"batch_size"             yaml:"batch_size"`
 	MaxWindowDurationMS  int64  `json:"max_window_duration_ms" yaml:"max_window_duration_ms"`
 	SolverTickIntervalMS int64  `json:"solver_tick_interval_ms" yaml:"solver_tick_interval_ms"`

@@ -3,12 +3,15 @@ package message
 import "github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 
 const (
-	FinalizedBlockReceiptMessageType = "FinalizedBlockReceipt"
-	BatchProposalMessageType         = "BatchProposal"
-	MatchRootFinalizedMessageType    = "MatchRootFinalized"
-	SettlementPackageMessageType     = "SettlementPackage"
-	FallbackTxMessageType            = "FallbackTx"
-	FallbackCompletedMessageType     = "FallbackCompleted"
+	FinalizedBlockReceiptMessageType  = "FinalizedBlockReceipt"
+	BatchProposalMessageType          = "BatchProposal"
+	MatchRootFinalizedMessageType     = "MatchRootFinalized"
+	SettlementPackageMessageType      = "SettlementPackage"
+	FallbackTxMessageType             = "FallbackTx"
+	FallbackCompletedMessageType      = "FallbackCompleted"
+	NettingBatchMetricMessageType     = "NettingBatchMetric"
+	NettingBeaconMetricMessageType    = "NettingBeaconMetric"
+	NettingExecutionMetricMessageType = "NettingExecutionMetric"
 )
 
 type FinalizedBlockReceiptMsg struct {
@@ -40,4 +43,19 @@ type FallbackCompletedMsg struct {
 	NodeID      int64
 	SourceShard int64
 	Key         model.FallbackKey
+}
+
+type NettingBatchMetricMsg struct {
+	NodeID int64
+	Metric model.NettingBatchMetric
+}
+
+type NettingBeaconMetricMsg struct {
+	NodeID int64
+	Metric model.NettingBeaconMetric
+}
+
+type NettingExecutionMetricMsg struct {
+	NodeID  int64
+	Metrics []model.NettingExecutionMetric
 }
