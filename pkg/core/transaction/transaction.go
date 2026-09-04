@@ -26,6 +26,8 @@ const (
 	CallContractTxType
 	IntentSubmitTxType
 	SettlementTxType
+	ReservedFallbackTxType
+	FallbackCompletedTxType
 )
 
 const (
@@ -58,6 +60,7 @@ type Transaction struct {
 	BrokerTxOpt // the optional setting only for broker transactions.
 	IntentTxOpt // the optional setting only for payment-intent transactions.
 	SettlementTxOpt
+	FallbackTxOpt
 }
 
 type RelayTxOpt struct {
@@ -80,6 +83,11 @@ type IntentTxOpt struct {
 
 type SettlementTxOpt struct {
 	Settlement *model.SettlementPackage `rlp:"nil"`
+}
+
+type FallbackTxOpt struct {
+	ReservedFallback  *model.ReservedFallback `rlp:"nil"`
+	FallbackCompleted *model.FallbackKey      `rlp:"nil"`
 }
 
 func NewTransaction(
@@ -131,6 +139,29 @@ func NewSettlementTransaction(settlement model.SettlementPackage, proposeTime ti
 	}
 }
 
+func NewReservedFallbackTransaction(item model.ReservedFallback, proposeTime time.Time) *Transaction {
+	cloned := item.Clone()
+	value := new(big.Int)
+	if cloned.Amount != nil {
+		value.Set(cloned.Amount)
+	}
+
+	return &Transaction{
+		Sender: cloned.Sender, Recipient: cloned.Recipient, Value: value,
+		PriorityFee: new(big.Int), CreateTime: proposeTime, GasLimit: defaultGasLimit,
+		FallbackTxOpt: FallbackTxOpt{ReservedFallback: &cloned},
+	}
+}
+
+func NewFallbackCompletedTransaction(key model.FallbackKey, proposeTime time.Time) *Transaction {
+	cloned := key
+
+	return &Transaction{
+		Value: new(big.Int), PriorityFee: new(big.Int), CreateTime: proposeTime, GasLimit: defaultGasLimit,
+		FallbackTxOpt: FallbackTxOpt{FallbackCompleted: &cloned},
+	}
+}
+
 // Encode encodes transactions.
 // Transaction encode should be prepare
 func (tx *Transaction) Encode() ([]byte, error) {
@@ -169,6 +200,23 @@ func (tx *Transaction) EncodeRLP(writer io.Writer) error {
 		HeightLock, HeightCurrent uint64
 		Intent                    *intent.PaymentIntent `rlp:"nil"`
 		Settlement                []byte
+		ReservedFallback          []byte
+		FallbackCompleted         []byte
+	}
+	var fallbackBytes, completedBytes []byte
+	if tx.ReservedFallback != nil {
+		var out bytes.Buffer
+		if err := gob.NewEncoder(&out).Encode(tx.ReservedFallback); err != nil {
+			return fmt.Errorf("encode reserved fallback transaction: %w", err)
+		}
+		fallbackBytes = out.Bytes()
+	}
+	if tx.FallbackCompleted != nil {
+		var out bytes.Buffer
+		if err := gob.NewEncoder(&out).Encode(tx.FallbackCompleted); err != nil {
+			return fmt.Errorf("encode fallback completion transaction: %w", err)
+		}
+		completedBytes = out.Bytes()
 	}
 
 	return rlp.Encode(writer, rlpTransaction{
@@ -178,7 +226,8 @@ func (tx *Transaction) EncodeRLP(writer io.Writer) error {
 		BrokerStage: tx.BrokerStage, Broker: tx.Broker, BOriginalHash: tx.BOriginalHash,
 		OriginalTxCreateTime: tx.OriginalTxCreateTime, NonceBroker: tx.NonceBroker,
 		HeightLock: tx.HeightLock, HeightCurrent: tx.HeightCurrent, Intent: tx.Intent,
-		Settlement: settlementBytes,
+		Settlement:       settlementBytes,
+		ReservedFallback: fallbackBytes, FallbackCompleted: completedBytes,
 	})
 }
 
@@ -195,6 +244,12 @@ func (tx *Transaction) Hash() ([]byte, error) {
 
 // TxType returns the type of a transaction by its variables.
 func (tx *Transaction) TxType() byte {
+	if tx.FallbackCompleted != nil {
+		return FallbackCompletedTxType
+	}
+	if tx.ReservedFallback != nil {
+		return ReservedFallbackTxType
+	}
 	if tx.Settlement != nil {
 		return SettlementTxType
 	}

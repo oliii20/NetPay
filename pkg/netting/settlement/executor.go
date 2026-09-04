@@ -18,7 +18,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/commitment"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/fallback"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/registry"
@@ -79,7 +79,11 @@ func (Executor) Execute(
 	for _, result := range settlement.Incoming {
 		totalIncoming.Add(totalIncoming, result.MatchedAmount)
 	}
-	amount, overflow := uint256.FromBig(totalIncoming)
+	totalRequired := new(big.Int).Set(totalIncoming)
+	for _, result := range settlement.Outgoing {
+		totalRequired.Add(totalRequired, result.FallbackAmount)
+	}
+	amount, overflow := uint256.FromBig(totalRequired)
 	if overflow || !core.CanTransfer(stateDB, common.Address(registry.EscrowAccountAddress), amount) {
 		return registry.ErrInsufficientBalance
 	}
@@ -89,6 +93,18 @@ func (Executor) Execute(
 		if err := registryState.Consume(result, settlement.BatchID); err != nil {
 			stateDB.RevertToSnapshot(snapshot)
 			return fmt.Errorf("consume outgoing reservation: %w", err)
+		}
+		if result.FallbackAmount.Sign() > 0 {
+			item := model.ReservedFallback{
+				IntentID: result.IntentID, BatchID: settlement.BatchID,
+				Sender: result.Intent.Sender, Recipient: result.Intent.Recipient,
+				SourceShard: result.Intent.SourceShard, DestinationShard: result.Intent.DestinationShard,
+				Amount: new(big.Int).Set(result.FallbackAmount), Proof: pack.Clone(),
+			}
+			if err := fallback.NewOutbox(stateDB).Create(item); err != nil {
+				stateDB.RevertToSnapshot(snapshot)
+				return fmt.Errorf("create reserved fallback: %w", err)
+			}
 		}
 	}
 	for _, result := range settlement.Incoming {
@@ -131,28 +147,7 @@ func IsExecuted(stateDB *state.StateDB, batchID merkle.Hash, shardID int64, chun
 }
 
 func verifyProofs(pack model.SettlementPackage) error {
-	chunkPayload, err := batch.SettlementPayload(pack.Settlement)
-	if err != nil {
-		return fmt.Errorf("encode settlement payload: %w", err)
-	}
-	if !merkle.Verify(batch.ChunkLeafDomain, chunkPayload, pack.ChunkProof, pack.ShardCommitment.ShardRoot) {
-		return ErrInvalidProof
-	}
-	shardPayload := batch.ShardCommitmentPayload(pack.ShardCommitment)
-	if !merkle.Verify(
-		commitment.ShardSettlementLeafDomain,
-		shardPayload,
-		pack.ShardProof,
-		pack.Header.ShardSettlementRoot,
-	) {
-		return ErrInvalidProof
-	}
-	roots := commitment.Roots{
-		CutRoot: pack.Header.CutRoot, IntentResultRoot: pack.Header.IntentResultRoot,
-		ShardSettlementRoot: pack.Header.ShardSettlementRoot,
-	}
-	if commitment.MatchRoot(roots) != pack.Header.MatchRoot ||
-		commitment.BatchID(pack.Header.PreviousBatchID, pack.Header.WindowID, pack.Header.MatchRoot) != pack.Header.BatchID {
+	if err := batch.VerifySettlementPackage(pack); err != nil {
 		return ErrInvalidProof
 	}
 

@@ -11,6 +11,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/fallback"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/receipt"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
@@ -18,10 +19,11 @@ import (
 
 // RelayTxBlockOp is the TxBlockOp which can handle relay transactions.
 type RelayTxBlockOp struct {
-	c        *chain.Chain
-	conn     *network.ConnHandler
-	resolver nodetopo.NodeMapper
-	receipts *receipt.Publisher
+	c         *chain.Chain
+	conn      *network.ConnHandler
+	resolver  nodetopo.NodeMapper
+	receipts  *receipt.Publisher
+	fallbacks *fallback.Publisher
 
 	cfg config.ConsensusNodeCfg
 	lp  config.LocalParams
@@ -35,12 +37,13 @@ func NewRelayTxBlockOp(
 	lp config.LocalParams,
 ) *RelayTxBlockOp {
 	return &RelayTxBlockOp{
-		c:        c,
-		conn:     conn,
-		resolver: rs,
-		receipts: receipt.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
-		cfg:      cfg,
-		lp:       lp,
+		c:         c,
+		conn:      conn,
+		resolver:  rs,
+		receipts:  receipt.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
+		fallbacks: fallback.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, c, conn, rs),
+		cfg:       cfg,
+		lp:        lp,
 	}
 }
 
@@ -83,6 +86,9 @@ func (r *RelayTxBlockOp) BlockCommitAndDeliver(ctx context.Context, isLeader boo
 	if err := r.receipts.Publish(ctx, r.c.GetShardID(), r.c.GetEpochID(), b, time.Now()); err != nil {
 		return fmt.Errorf("publish finalized block receipt: %w", err)
 	}
+	if err := r.fallbacks.PublishAfterBlock(ctx, b); err != nil {
+		return fmt.Errorf("publish reserved fallback: %w", err)
+	}
 
 	// deliver this block info to the supervisor
 	innerTxs, r1Txs, r2Txs := r.splitTxs(ctx, b.TxList)
@@ -112,7 +118,7 @@ func (r *RelayTxBlockOp) modifyTxRelayOpt(
 	shardID := r.c.GetShardID()
 
 	for _, tx := range txs {
-		if tx.TxType() == transaction.IntentSubmitTxType || tx.TxType() == transaction.SettlementTxType {
+		if isNettingSystemTx(tx) {
 			modifiedTxs = append(modifiedTxs, tx)
 			continue
 		}
@@ -181,7 +187,7 @@ func (r *RelayTxBlockOp) splitTxs(
 	)
 
 	for _, tx := range txs {
-		if tx.TxType() == transaction.IntentSubmitTxType || tx.TxType() == transaction.SettlementTxType {
+		if isNettingSystemTx(tx) {
 			continue
 		}
 
@@ -198,6 +204,16 @@ func (r *RelayTxBlockOp) splitTxs(
 	}
 
 	return innerTxs, r1txs, r2txs
+}
+
+func isNettingSystemTx(tx transaction.Transaction) bool {
+	switch tx.TxType() {
+	case transaction.IntentSubmitTxType, transaction.SettlementTxType,
+		transaction.ReservedFallbackTxType, transaction.FallbackCompletedTxType:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *RelayTxBlockOp) deliverBlockInfo2Supervisor(

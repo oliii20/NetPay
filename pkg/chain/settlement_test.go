@@ -14,6 +14,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/fallback"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/registry"
@@ -71,7 +72,7 @@ func TestSettlementConsumesReservationsAndCreditsLocalRecipients(t *testing.T) {
 	states0, err := shard0.GetAccountStates(ctx, []account.Address{reverse.Recipient, registry.EscrowAccountAddress})
 	require.NoError(t, err)
 	require.Equal(t, new(big.Int).Add(initial, big.NewInt(7)), states0[0].Balance)
-	require.Equal(t, big.NewInt(3), states0[1].Balance)
+	require.Zero(t, states0[1].Balance.Sign())
 	states1, err := shard1.GetAccountStates(ctx, []account.Address{forward.Recipient, registry.EscrowAccountAddress})
 	require.NoError(t, err)
 	require.Equal(t, new(big.Int).Add(initial, big.NewInt(7)), states1[0].Balance)
@@ -87,6 +88,45 @@ func TestSettlementConsumesReservationsAndCreditsLocalRecipients(t *testing.T) {
 	afterDuplicate, err := shard0.GetAccountStates(ctx, []account.Address{reverse.Recipient})
 	require.NoError(t, err)
 	require.Equal(t, states0[0].Balance, afterDuplicate[0].Balance)
+
+	pendingFallbacks, err := shard0.GetPendingFallbacks(ctx)
+	require.NoError(t, err)
+	require.Len(t, pendingFallbacks, 1)
+	require.Equal(t, big.NewInt(3), pendingFallbacks[0].Amount)
+	fallbackTx := transaction.NewReservedFallbackTransaction(pendingFallbacks[0], time.Now())
+	fallbackBlock, err := shard1.GenerateBlock(
+		ctx, testMiner, block.TxBlockType,
+		block.Body{TxList: []transaction.Transaction{*fallbackTx}}, block.MigrationOpt{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, shard1.AddBlock(ctx, fallbackBlock))
+	credited, err := shard1.GetAccountStates(ctx, []account.Address{forward.Recipient})
+	require.NoError(t, err)
+	require.Equal(t, new(big.Int).Add(initial, big.NewInt(10)), credited[0].Balance)
+
+	duplicateFallback, err := shard1.GenerateBlock(
+		ctx, testMiner, block.TxBlockType,
+		block.Body{TxList: []transaction.Transaction{*fallbackTx}}, block.MigrationOpt{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, shard1.AddBlock(ctx, duplicateFallback))
+	creditedAgain, err := shard1.GetAccountStates(ctx, []account.Address{forward.Recipient})
+	require.NoError(t, err)
+	require.Equal(t, credited[0].Balance, creditedAgain[0].Balance)
+
+	completion := transaction.NewFallbackCompletedTransaction(pendingFallbacks[0].Key(), time.Now())
+	completionBlock, err := shard0.GenerateBlock(
+		ctx, testMiner, block.TxBlockType,
+		block.Body{TxList: []transaction.Transaction{*completion}}, block.MigrationOpt{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, shard0.AddBlock(ctx, completionBlock))
+	status, err := shard0.GetFallbackStatus(ctx, pendingFallbacks[0].Key())
+	require.NoError(t, err)
+	require.Equal(t, fallback.StatusCompleted, status)
+	pendingFallbacks, err = shard0.GetPendingFallbacks(ctx)
+	require.NoError(t, err)
+	require.Empty(t, pendingFallbacks)
 }
 
 func TestSettlementRejectsUnconfirmedOrTamperedPackage(t *testing.T) {

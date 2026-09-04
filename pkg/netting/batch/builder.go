@@ -150,6 +150,40 @@ func BuildSettlementPackages(proposal model.BatchProposal) ([]model.SettlementPa
 	return packages, nil
 }
 
+func VerifySettlementPackage(pack model.SettlementPackage) error {
+	if pack.Settlement.BatchID != pack.Header.BatchID ||
+		pack.Settlement.WindowID != pack.Header.WindowID ||
+		pack.Settlement.ShardID != pack.ShardCommitment.ShardID ||
+		pack.Settlement.ChunkCount != pack.ShardCommitment.ChunkCount {
+		return ErrInvalidSettlement
+	}
+	chunkPayload, err := SettlementPayload(pack.Settlement)
+	if err != nil {
+		return err
+	}
+	if !merkle.Verify(ChunkLeafDomain, chunkPayload, pack.ChunkProof, pack.ShardCommitment.ShardRoot) {
+		return ErrInvalidSettlement
+	}
+	if !merkle.Verify(
+		commitment.ShardSettlementLeafDomain,
+		ShardCommitmentPayload(pack.ShardCommitment),
+		pack.ShardProof,
+		pack.Header.ShardSettlementRoot,
+	) {
+		return ErrInvalidSettlement
+	}
+	roots := commitment.Roots{
+		CutRoot: pack.Header.CutRoot, IntentResultRoot: pack.Header.IntentResultRoot,
+		ShardSettlementRoot: pack.Header.ShardSettlementRoot,
+	}
+	if commitment.MatchRoot(roots) != pack.Header.MatchRoot ||
+		commitment.BatchID(pack.Header.PreviousBatchID, pack.Header.WindowID, pack.Header.MatchRoot) != pack.Header.BatchID {
+		return ErrInvalidSettlement
+	}
+
+	return nil
+}
+
 func canonicalCuts(input []model.ShardCut) ([]model.ShardCut, []int64, error) {
 	cuts := append([]model.ShardCut(nil), input...)
 	sort.Slice(cuts, func(i, j int) bool { return cuts[i].ShardID < cuts[j].ShardID })

@@ -522,6 +522,10 @@ func (c *Chain) txExecute(
 		if err := c.settlementTxExecute(v, tx); err != nil {
 			return fmt.Errorf("execute settlement failed: %w", err)
 		}
+	case transaction.ReservedFallbackTxType, transaction.FallbackCompletedTxType:
+		if err := c.fallbackTxExecute(v, tx); err != nil {
+			return fmt.Errorf("execute reserved fallback failed: %w", err)
+		}
 	case transaction.CreateContractTxType:
 		contractAddr, _, err := c.contractExec.CreateContractTxExecute(v, bCtx, tx)
 		if err != nil {

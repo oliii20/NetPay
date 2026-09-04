@@ -148,7 +148,7 @@ func NewPBFTNode(
 		return nil, fmt.Errorf("invalid consensus type=%s", cfg.ConsensusType)
 	}
 	if cfg.NettingCfg.Enabled {
-		omh = outsideop.NewNettingOutsideOp(omh, settlement.NewInbox(lp.ShardID, bc, txp))
+		omh = outsideop.NewNettingOutsideOp(omh, settlement.NewInbox(lp.ShardID, bc, txp), txp)
 	}
 
 	return &Node{

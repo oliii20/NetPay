@@ -68,6 +68,10 @@ func getMsgType(msg any) (string, error) {
 		msgType = MatchRootFinalizedMessageType
 	case *SettlementPackageMsg, SettlementPackageMsg:
 		msgType = SettlementPackageMessageType
+	case *FallbackTxMsg, FallbackTxMsg:
+		msgType = FallbackTxMessageType
+	case *FallbackCompletedMsg, FallbackCompletedMsg:
+		msgType = FallbackCompletedMessageType
 
 	case *RelayBlockInfoMsg, RelayBlockInfoMsg:
 		msgType = RelayBlockInfoMessageType

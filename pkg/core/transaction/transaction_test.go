@@ -115,6 +115,42 @@ func TestSettlementTransactionTypeAndHashCommitPackage(t *testing.T) {
 	require.NotEqual(t, leftHash, rightHash)
 }
 
+func TestFallbackTransactionTypesAndHashesCommitPayloads(t *testing.T) {
+	t.Parallel()
+	require.Zero(t, NewReservedFallbackTransaction(model.ReservedFallback{}, time.Unix(1, 0)).Value.Sign())
+
+	var intentID intent.ID
+	intentID[0] = 1
+	item := model.ReservedFallback{
+		IntentID: intentID, BatchID: merkle.Hash{2},
+		Amount: big.NewInt(3), SourceShard: 0, DestinationShard: 1,
+	}
+	reserved := NewReservedFallbackTransaction(item, time.Unix(1, 0))
+	require.Equal(t, ReservedFallbackTxType, reserved.TxType())
+	reservedHash, err := reserved.Hash()
+	require.NoError(t, err)
+
+	item.Amount = big.NewInt(4)
+	changedReserved := NewReservedFallbackTransaction(item, time.Unix(1, 0))
+	changedReservedHash, err := changedReserved.Hash()
+	require.NoError(t, err)
+	require.NotEqual(t, reservedHash, changedReservedHash)
+
+	key := model.FallbackKey{IntentID: intentID, BatchID: merkle.Hash{2}}
+	completed := NewFallbackCompletedTransaction(key, time.Unix(1, 0))
+	require.Equal(t, FallbackCompletedTxType, completed.TxType())
+	completedHash, err := completed.Hash()
+	require.NoError(t, err)
+
+	key.BatchID[0] = 3
+	changedCompleted := NewFallbackCompletedTransaction(key, time.Unix(1, 0))
+	changedCompletedHash, err := changedCompleted.Hash()
+	require.NoError(t, err)
+	require.NotEqual(t, completedHash, changedCompletedHash)
+	require.Equal(t, byte(7), ReservedFallbackTxType)
+	require.Equal(t, byte(8), FallbackCompletedTxType)
+}
+
 func transactionTestIntent(signature []byte) *intent.PaymentIntent {
 	var recipient account.Address
 	recipient[0] = 1
