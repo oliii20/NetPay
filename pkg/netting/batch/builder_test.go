@@ -36,6 +36,7 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(3), proposal.Header.WindowID)
 	require.Equal(t, previous, proposal.Header.PreviousBatchID)
+	require.Equal(t, "full", proposal.Header.MatcherMode)
 	require.NotZero(t, proposal.Header.MatchRoot)
 	require.NotZero(t, proposal.Header.BatchID)
 	require.Equal(t, int64(0), proposal.Header.Cuts[0].ShardID)
@@ -67,6 +68,10 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	rebuilt, err := (batch.Builder{}).Build(frozen, previous)
 	require.NoError(t, err)
 	require.Equal(t, proposal, rebuilt)
+
+	exactOnly, err := (batch.Builder{MatcherMode: "exact_only"}).Build(frozen, previous)
+	require.NoError(t, err)
+	require.Equal(t, "exact_only", exactOnly.Header.MatcherMode)
 
 	frozen.Intents[0].Amount.SetInt64(999)
 	require.Equal(t, int64(10), bySource[0].Intent.Amount.Int64())

@@ -75,6 +75,29 @@ func TestSolverBootstrapsBuildsAndRestoresBatch(t *testing.T) {
 	}
 }
 
+func TestSolverDispatchesPendingBatchOnlyOnce(t *testing.T) {
+	store, err := batchstore.Open(filepath.Join(t.TempDir(), "solver.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	p2p := &testP2P{}
+	node, err := solver.New(solver.Config{
+		ShardCount: 2, BatchSize: 2, MaxWindowDuration: time.Minute, TickInterval: time.Millisecond,
+	}, network.NewConnHandler(p2p), testResolver{}, store)
+	require.NoError(t, err)
+
+	require.NoError(t, node.HandleReceipt(message.FinalizedBlockReceiptMsg{
+		NodeID: 0, Receipt: solverReceipt(0, solverHash(0x10), solverHash(0x11), solverPayment(0, 1, 10)),
+	}))
+	require.NoError(t, node.HandleReceipt(message.FinalizedBlockReceiptMsg{
+		NodeID: 0, Receipt: solverReceipt(1, solverHash(0x20), solverHash(0x21), solverPayment(1, 0, 7)),
+	}))
+	require.NoError(t, node.Step(context.Background()))
+	require.Equal(t, 1, countSent(p2p.sent, message.BatchProposalMessageType))
+
+	require.NoError(t, node.Step(context.Background()))
+	require.Equal(t, 1, countSent(p2p.sent, message.BatchProposalMessageType))
+}
+
 func TestSolverRejectsNonLeaderAndInvalidShard(t *testing.T) {
 	store, err := batchstore.Open(filepath.Join(t.TempDir(), "solver.db"))
 	require.NoError(t, err)
@@ -137,6 +160,17 @@ func (testResolver) ChangeLeader(int64, nodetopo.NodeInfo) error { return nil }
 func (testResolver) GetAllLeaders() ([]nodetopo.NodeInfo, error) { return nil, nil }
 func (testResolver) GetSupervisor() (nodetopo.NodeInfo, error)   { return nodetopo.NodeInfo{}, nil }
 func (testResolver) GetSolver() (nodetopo.NodeInfo, error)       { return nodetopo.NodeInfo{}, nil }
+
+func countSent(messages []*rpcserver.WrappedMsg, msgType string) int {
+	count := 0
+	for _, msg := range messages {
+		if msg.GetMsgType() == msgType {
+			count++
+		}
+	}
+
+	return count
+}
 
 func solverReceipt(
 	shardID int64,

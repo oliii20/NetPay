@@ -39,6 +39,55 @@ func TestMatchRunsExactBeforeBestFit(t *testing.T) {
 	})
 }
 
+func TestMatchModesSupportAblation(t *testing.T) {
+	t.Parallel()
+
+	payments := []intent.PaymentIntent{
+		matcherTestIntent(1, 0, 1, 5),
+		matcherTestIntent(2, 0, 1, 7),
+		matcherTestIntent(3, 1, 0, 5),
+		matcherTestIntent(4, 1, 0, 8),
+	}
+
+	exact, err := matcher.MatchWithMode(payments, matcher.ExactOnlyMode)
+	require.NoError(t, err)
+	require.Equal(t, []matcher.Phase{matcher.ExactPhase}, allocationPhases(exact))
+	requireResultAmounts(t, exact, map[byte][2]int64{
+		1: {5, 0},
+		2: {0, 7},
+		3: {5, 0},
+		4: {0, 8},
+	})
+
+	bestFit, err := matcher.MatchWithMode(payments, matcher.BestFitMode)
+	require.NoError(t, err)
+	require.Equal(t, []matcher.Phase{matcher.ExactPhase, matcher.BestFitPhase}, allocationPhases(bestFit))
+	requireResultAmounts(t, bestFit, map[byte][2]int64{
+		1: {5, 0},
+		2: {7, 0},
+		3: {5, 0},
+		4: {7, 1},
+	})
+
+	full, err := matcher.MatchWithMode(payments, matcher.FullMode)
+	require.NoError(t, err)
+	require.Equal(t, []matcher.Phase{matcher.ExactPhase, matcher.BestFitPhase}, allocationPhases(full))
+	requireResultAmounts(t, full, map[byte][2]int64{
+		1: {5, 0},
+		2: {7, 0},
+		3: {5, 0},
+		4: {7, 1},
+	})
+
+	split, err := matcher.MatchWithMode([]intent.PaymentIntent{
+		matcherTestIntent(6, 0, 1, 7),
+		matcherTestIntent(7, 1, 0, 4),
+		matcherTestIntent(8, 1, 0, 3),
+	}, matcher.FullMode)
+	require.NoError(t, err)
+	require.Equal(t, []matcher.Phase{matcher.SplitPhase, matcher.SplitPhase}, allocationPhases(split))
+}
+
 func TestMatchBestFitChoosesSmallestSufficientCounterIntent(t *testing.T) {
 	t.Parallel()
 

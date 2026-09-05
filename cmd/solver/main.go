@@ -11,6 +11,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/config"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/logger"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batchstore"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/matcher"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/solver"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
@@ -53,6 +54,7 @@ func main() {
 		MaxWindowDuration: time.Duration(cfg.MaxWindowDurationMS) * time.Millisecond,
 		TickInterval:      time.Duration(cfg.SolverTickIntervalMS) * time.Millisecond,
 		MetricsEnabled:    cfg.MetricsEnabled,
+		MatcherMode:       matcher.Mode(cfg.MatcherMode),
 	}, network.NewConnHandler(p2p), resolver, store)
 	if err != nil {
 		log.Fatal(fmt.Errorf("create solver: %w", err))

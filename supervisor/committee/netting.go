@@ -10,6 +10,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network/rpcserver"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/partition"
 )
@@ -76,6 +77,47 @@ func (n *nettingWorkload) handleProgress(wrapped *rpcserver.WrappedMsg) error {
 	for _, id := range progress.IntentIDs {
 		if _, exists := n.injected[id]; exists {
 			n.completed[id] = struct{}{}
+		}
+	}
+
+	return nil
+}
+
+func (n *nettingWorkload) handleFallbackCompleted(wrapped *rpcserver.WrappedMsg) error {
+	if !n.enabled || wrapped.GetMsgType() != message.FallbackCompletedMessageType {
+		return nil
+	}
+	var completed message.FallbackCompletedMsg
+	if err := gob.NewDecoder(bytes.NewReader(wrapped.GetPayload())).Decode(&completed); err != nil {
+		return fmt.Errorf("decode fallback completed: %w", err)
+	}
+	if completed.NodeID != 0 {
+		return fmt.Errorf("fallback completion is not from a shard leader: %d", completed.NodeID)
+	}
+	if _, exists := n.injected[completed.Key.IntentID]; exists {
+		n.completed[completed.Key.IntentID] = struct{}{}
+	}
+
+	return nil
+}
+
+func (n *nettingWorkload) handleExecutionMetric(wrapped *rpcserver.WrappedMsg) error {
+	if !n.enabled || wrapped.GetMsgType() != message.NettingExecutionMetricMessageType {
+		return nil
+	}
+	var msg message.NettingExecutionMetricMsg
+	if err := gob.NewDecoder(bytes.NewReader(wrapped.GetPayload())).Decode(&msg); err != nil {
+		return fmt.Errorf("decode netting execution metric: %w", err)
+	}
+	if msg.NodeID != 0 {
+		return fmt.Errorf("netting execution metric is not from a shard leader: %d", msg.NodeID)
+	}
+	for _, metric := range msg.Metrics {
+		switch metric.Phase {
+		case model.MetricPhaseSettlement, model.MetricPhaseFallback:
+			if _, exists := n.injected[metric.IntentID]; exists {
+				n.completed[metric.IntentID] = struct{}{}
+			}
 		}
 	}
 

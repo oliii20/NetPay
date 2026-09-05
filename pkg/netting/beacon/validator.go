@@ -9,6 +9,7 @@ import (
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/matcher"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/window"
@@ -75,7 +76,9 @@ func (v *Validator) Validate(proposal model.BatchProposal) error {
 		}
 	}
 
-	expected, err := (batch.Builder{}).Build(window.FrozenWindow{
+	expected, err := (batch.Builder{
+		MatcherMode: matcher.Mode(proposal.Header.MatcherMode),
+	}).Build(window.FrozenWindow{
 		WindowID: proposal.Header.WindowID,
 		Cuts:     append([]model.ShardCut(nil), proposal.Header.Cuts...),
 		Receipts: cloneFinalizedReceipts(proposal.Sidecar.FinalizedBlocks),

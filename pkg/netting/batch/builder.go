@@ -29,28 +29,31 @@ var (
 	ErrInvalidSettlement = errors.New("invalid shard settlement collection")
 )
 
-type Builder struct{}
+type Builder struct {
+	MatcherMode matcher.Mode
+}
 
-func (Builder) Build(frozen window.FrozenWindow, previousBatchID merkle.Hash) (model.BatchProposal, error) {
-	proposal, _, err := (Builder{}).BuildMeasured(frozen, previousBatchID)
+func (b Builder) Build(frozen window.FrozenWindow, previousBatchID merkle.Hash) (model.BatchProposal, error) {
+	proposal, _, err := b.BuildMeasured(frozen, previousBatchID)
 
 	return proposal, err
 }
 
-func (Builder) BuildMeasured(
+func (b Builder) BuildMeasured(
 	frozen window.FrozenWindow,
 	previousBatchID merkle.Hash,
 ) (model.BatchProposal, model.NettingBatchMetric, error) {
 	if len(frozen.Intents) == 0 {
 		return model.BatchProposal{}, model.NettingBatchMetric{}, ErrEmptyWindow
 	}
+	matcherMode := matcher.NormalizeMode(b.MatcherMode)
 
 	cuts, shardIDs, err := canonicalCuts(frozen.Cuts)
 	if err != nil {
 		return model.BatchProposal{}, model.NettingBatchMetric{}, err
 	}
 	matchStarted := time.Now()
-	matchOutput, err := matcher.Match(frozen.Intents)
+	matchOutput, err := matcher.MatchWithMode(frozen.Intents, matcherMode)
 	if err != nil {
 		return model.BatchProposal{}, model.NettingBatchMetric{}, fmt.Errorf("match frozen window %d: %w", frozen.WindowID, err)
 	}
@@ -78,6 +81,7 @@ func (Builder) BuildMeasured(
 			BatchID:             batchID,
 			PreviousBatchID:     previousBatchID,
 			WindowID:            frozen.WindowID,
+			MatcherMode:         string(matcherMode),
 			CutRoot:             roots.CutRoot,
 			IntentResultRoot:    roots.IntentResultRoot,
 			ShardSettlementRoot: roots.ShardSettlementRoot,

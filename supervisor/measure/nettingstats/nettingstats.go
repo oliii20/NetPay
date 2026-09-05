@@ -144,12 +144,18 @@ func (c *Collector) updateExecution(metric model.NettingExecutionMetric) {
 			entry.completedAt = earlier(entry.completedAt, metric.CommittedAt)
 		} else {
 			entry.usedFallback = true
+			entry.fallbackAt = earlier(entry.fallbackAt, metric.CommittedAt)
+			if entry.completedAt.IsZero() {
+				entry.completedAt = metric.CommittedAt
+			}
 		}
 	case model.MetricPhaseFallback:
 		entry.batchID = metric.BatchID
 		entry.usedFallback = true
 		entry.fallbackAt = earlier(entry.fallbackAt, metric.CommittedAt)
-		entry.completedAt = earlier(entry.completedAt, metric.CommittedAt)
+		if entry.completedAt.IsZero() || metric.CommittedAt.After(entry.completedAt) {
+			entry.completedAt = metric.CommittedAt
+		}
 	}
 }
 

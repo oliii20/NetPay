@@ -41,7 +41,7 @@ func PrepareNetworkByCfg(cfg *config.Config, lp *config.LocalParams) (network.P2
 
 	switch cfg.CommunicationMode {
 	case config.DirectConnMode:
-		p2p, nodeM, err = loadDirectNetwork(cfg.GlobalSys, lp)
+		p2p, nodeM, err = loadDirectNetwork(cfg.GlobalSys, cfg.NetworkCfg, lp)
 		if err != nil {
 			return nil, nil, fmt.Errorf("load direct network: %w", err)
 		}
@@ -80,8 +80,12 @@ func PrepareNetworkByCfg(cfg *config.Config, lp *config.LocalParams) (network.P2
 	return p2p, nodeM, nil
 }
 
-func loadDirectNetwork(cfg config.SystemCfg, lp *config.LocalParams) (network.P2PConn, nodetopo.NodeMapper, error) {
-	info2Host, err := readIpTableFromFile(cfg)
+func loadDirectNetwork(
+	systemCfg config.SystemCfg,
+	networkCfg config.NetworkCfg,
+	lp *config.LocalParams,
+) (network.P2PConn, nodetopo.NodeMapper, error) {
+	info2Host, err := readIpTableFromFile(systemCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read ip table from the file failed: %w", err)
 	}
@@ -93,7 +97,7 @@ func loadDirectNetwork(cfg config.SystemCfg, lp *config.LocalParams) (network.P2
 	meNode := nodetopo.NodeInfo{ShardID: lp.ShardID, NodeID: lp.NodeID}
 
 	// Set an RPC Connection as the P2P Connection.
-	p2p := clientconnrpc.NewRPCConn(meNode, info2Host)
+	p2p := clientconnrpc.NewRPCConn(meNode, info2Host, time.Duration(networkCfg.Latency)*time.Millisecond)
 	shardNodeInfo := make(map[int64][]nodetopo.NodeInfo)
 	shardLeader := make(map[int64]nodetopo.NodeInfo)
 

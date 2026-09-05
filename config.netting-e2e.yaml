@@ -35,6 +35,7 @@ netting:
   batch_size: 20
   max_window_duration_ms: 1000
   solver_tick_interval_ms: 100
+  matcher_mode: "full"
   batch_store_path: "./.exp/netting-e2e/netting/solver.db"
   beacon_store_path: "./.exp/netting-e2e/netting/beacon.db"
 

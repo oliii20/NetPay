@@ -36,6 +36,7 @@ type RPCConn struct {
 	me        nodetopo.NodeInfo            // the NodeInfo of this node
 	info2Host map[nodetopo.NodeInfo]string // the mapper from the NodeInfos to the node hosts
 	msgBuffer chan *rpcserver.WrappedMsg   // the buffer of a set of WrappedMsg
+	latency   time.Duration
 
 	connLock   sync.Mutex
 	clientPool map[nodetopo.NodeInfo]*clientConnection
@@ -43,10 +44,11 @@ type RPCConn struct {
 	rpcserver.UnimplementedReplicaConnServer
 }
 
-func NewRPCConn(me nodetopo.NodeInfo, info2Host map[nodetopo.NodeInfo]string) *RPCConn {
+func NewRPCConn(me nodetopo.NodeInfo, info2Host map[nodetopo.NodeInfo]string, latency time.Duration) *RPCConn {
 	return &RPCConn{
 		me:         me,
 		info2Host:  info2Host,
+		latency:    latency,
 		clientPool: make(map[nodetopo.NodeInfo]*clientConnection),
 		msgBuffer:  make(chan *rpcserver.WrappedMsg, msgBufferSize),
 	}
@@ -119,6 +121,13 @@ func (r *RPCConn) sendMessage(ctx context.Context, dest nodetopo.NodeInfo, msg *
 	// if the dest node is me, add to the buffer directly
 	if r.me == dest {
 		return r.add2LocalBuffer(msg)
+	}
+	if r.latency > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(r.latency):
+		}
 	}
 
 	r.connLock.Lock()

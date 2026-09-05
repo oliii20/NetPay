@@ -30,6 +30,14 @@ const (
 	SplitPhase
 )
 
+type Mode string
+
+const (
+	FullMode      Mode = "full"
+	BestFitMode   Mode = "best_fit"
+	ExactOnlyMode Mode = "exact_only"
+)
+
 type GroupKey struct {
 	LowerShard  int64
 	HigherShard int64
@@ -64,6 +72,11 @@ type matchGroup struct {
 }
 
 func Match(payments []intent.PaymentIntent) (Output, error) {
+	return MatchWithMode(payments, FullMode)
+}
+
+func MatchWithMode(payments []intent.PaymentIntent, mode Mode) (Output, error) {
+	mode = NormalizeMode(mode)
 	items, groups, err := prepare(payments)
 	if err != nil {
 		return Output{}, err
@@ -75,11 +88,13 @@ func Match(payments []intent.PaymentIntent) (Output, error) {
 		group := groups[key]
 		allocations = append(allocations, matchExact(group)...)
 
-		remainingAllocations, matchErr := matchRemaining(group)
-		if matchErr != nil {
-			return Output{}, fmt.Errorf("match group %+v: %w", key, matchErr)
+		if mode != ExactOnlyMode {
+			remainingAllocations, matchErr := matchRemaining(group, mode == FullMode)
+			if matchErr != nil {
+				return Output{}, fmt.Errorf("match group %+v: %w", key, matchErr)
+			}
+			allocations = append(allocations, remainingAllocations...)
 		}
-		allocations = append(allocations, remainingAllocations...)
 
 		if invariantErr := validateGroup(group); invariantErr != nil {
 			return Output{}, fmt.Errorf("validate group %+v: %w", key, invariantErr)
@@ -92,6 +107,17 @@ func Match(payments []intent.PaymentIntent) (Output, error) {
 	}
 
 	return Output{Results: results, Allocations: allocations}, nil
+}
+
+func NormalizeMode(mode Mode) Mode {
+	switch mode {
+	case "", FullMode:
+		return FullMode
+	case BestFitMode, ExactOnlyMode:
+		return mode
+	default:
+		return FullMode
+	}
 }
 
 func prepare(payments []intent.PaymentIntent) ([]*workItem, map[GroupKey]*matchGroup, error) {
@@ -213,7 +239,7 @@ func matchExact(group *matchGroup) []Allocation {
 	return allocations
 }
 
-func matchRemaining(group *matchGroup) ([]Allocation, error) {
+func matchRemaining(group *matchGroup, allowSplit bool) ([]Allocation, error) {
 	lowerTotal := sumRemaining(group.lowerToHigher)
 	higherTotal := sumRemaining(group.higherToLower)
 
@@ -255,6 +281,10 @@ func matchRemaining(group *matchGroup) ([]Allocation, error) {
 			if candidate.remaining.Sign() > 0 {
 				tree.ReplaceOrInsert(candidate)
 			}
+			continue
+		}
+
+		if !allowSplit {
 			continue
 		}
 

@@ -15,6 +15,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batchstore"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/matcher"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/metrics"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
@@ -37,20 +38,22 @@ type Config struct {
 	MaxWindowDuration time.Duration
 	TickInterval      time.Duration
 	MetricsEnabled    bool
+	MatcherMode       matcher.Mode
 }
 
 type Node struct {
-	cfg       Config
-	conn      *network.ConnHandler
-	resolver  nodetopo.NodeMapper
-	store     *batchstore.Store
-	manager   *window.Manager
-	bootstrap map[int64][]model.FinalizedBlockReceipt
-	chainTip  merkle.Hash
-	pending   []merkle.Hash
-	builder   batch.Builder
-	metrics   *metrics.Publisher
-	stopped   bool
+	cfg        Config
+	conn       *network.ConnHandler
+	resolver   nodetopo.NodeMapper
+	store      *batchstore.Store
+	manager    *window.Manager
+	bootstrap  map[int64][]model.FinalizedBlockReceipt
+	chainTip   merkle.Hash
+	pending    []merkle.Hash
+	dispatched map[merkle.Hash]struct{}
+	builder    batch.Builder
+	metrics    *metrics.Publisher
+	stopped    bool
 }
 
 func New(
@@ -66,12 +69,14 @@ func New(
 		return nil, fmt.Errorf("%w: missing dependency", ErrInvalidConfig)
 	}
 	node := &Node{
-		cfg:       cfg,
-		conn:      conn,
-		resolver:  resolver,
-		store:     store,
-		bootstrap: make(map[int64][]model.FinalizedBlockReceipt),
-		metrics:   metrics.NewPublisher(cfg.MetricsEnabled, 0, conn, resolver),
+		cfg:        cfg,
+		conn:       conn,
+		resolver:   resolver,
+		store:      store,
+		bootstrap:  make(map[int64][]model.FinalizedBlockReceipt),
+		dispatched: make(map[merkle.Hash]struct{}),
+		builder:    batch.Builder{MatcherMode: cfg.MatcherMode},
+		metrics:    metrics.NewPublisher(cfg.MetricsEnabled, 0, conn, resolver),
 	}
 	state, found, err := store.LoadState()
 	if err != nil {
@@ -194,6 +199,7 @@ func (n *Node) HandleFinalized(ctx context.Context, msg message.MatchRootFinaliz
 		return err
 	}
 	n.pending = n.pending[1:]
+	delete(n.dispatched, msg.Header.BatchID)
 
 	return n.store.SaveState(n.snapshot())
 }
@@ -306,7 +312,11 @@ func (n *Node) dispatchPending(ctx context.Context) error {
 	if len(n.pending) == 0 {
 		return nil
 	}
-	proposal, err := n.store.GetProposal(n.pending[0])
+	batchID := n.pending[0]
+	if _, ok := n.dispatched[batchID]; ok {
+		return nil
+	}
+	proposal, err := n.store.GetProposal(batchID)
 	if err != nil {
 		return err
 	}
@@ -319,11 +329,15 @@ func (n *Node) dispatchPending(ctx context.Context) error {
 		return fmt.Errorf("resolve Beacon leader: %w", err)
 	}
 	n.conn.SendMsg2Dest(ctx, beaconLeader, wrapped)
+	n.dispatched[batchID] = struct{}{}
 
 	return nil
 }
 
 func (n *Node) restore(state batchstore.SolverState) error {
+	if n.dispatched == nil {
+		n.dispatched = make(map[merkle.Hash]struct{})
+	}
 	n.bootstrap = cloneBootstrap(state.BootstrapReceipts)
 	n.chainTip = state.ChainTip
 	n.pending = append([]merkle.Hash(nil), state.PendingBatchIDs...)

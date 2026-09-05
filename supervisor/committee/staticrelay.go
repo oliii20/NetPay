@@ -62,6 +62,17 @@ func (s *StaticRelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.Wrapp
 	if msg.GetMsgType() == message.NettingProgressMessageType {
 		return s.netting.handleProgress(msg)
 	}
+	if msg.GetMsgType() == message.FallbackCompletedMessageType {
+		return s.netting.handleFallbackCompleted(msg)
+	}
+	if msg.GetMsgType() == message.NettingExecutionMetricMessageType {
+		return s.netting.handleExecutionMetric(msg)
+	}
+	if msg.GetMsgType() == message.NettingBatchMetricMessageType ||
+		msg.GetMsgType() == message.NettingBeaconMetricMessageType ||
+		msg.GetMsgType() == message.MatchRootFinalizedMessageType {
+		return nil
+	}
 	if msg.GetMsgType() != message.RelayBlockInfoMessageType {
 		slog.Info("unknown expected msg type", "type", msg.GetMsgType())
 		return nil

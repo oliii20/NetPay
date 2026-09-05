@@ -11,6 +11,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 )
 
 func TestNettingWorkloadConvertsCrossShardTransactionsAndTracksCompletion(t *testing.T) {
@@ -45,4 +46,36 @@ func TestNettingWorkloadConvertsCrossShardTransactionsAndTracksCompletion(t *tes
 	require.True(t, workload.finished())
 	require.NoError(t, workload.handleProgress(wrapped))
 	require.Equal(t, 2, workload.completedCount())
+
+	fallbackOnly := newNettingWorkload(true, 4, 11)
+	converted, err = fallbackOnly.convert(txs[:1])
+	require.NoError(t, err)
+	fallbackID, err := converted[0].Intent.ID()
+	require.NoError(t, err)
+	fallbackWrapped, err := message.WrapMsg(&message.FallbackCompletedMsg{
+		NodeID: 0,
+		Key:    model.FallbackKey{IntentID: fallbackID},
+	})
+	require.NoError(t, err)
+	require.NoError(t, fallbackOnly.handleFallbackCompleted(fallbackWrapped))
+	require.True(t, fallbackOnly.finished())
+	require.NoError(t, fallbackOnly.handleFallbackCompleted(fallbackWrapped))
+	require.Equal(t, 1, fallbackOnly.completedCount())
+
+	executionOnly := newNettingWorkload(true, 4, 11)
+	converted, err = executionOnly.convert(txs[:1])
+	require.NoError(t, err)
+	executionID, err := converted[0].Intent.ID()
+	require.NoError(t, err)
+	executionWrapped, err := message.WrapMsg(&message.NettingExecutionMetricMsg{
+		NodeID: 0,
+		Metrics: []model.NettingExecutionMetric{{
+			Phase:    model.MetricPhaseSettlement,
+			IntentID: executionID,
+			Final:    false,
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, executionOnly.handleExecutionMetric(executionWrapped))
+	require.True(t, executionOnly.finished())
 }
