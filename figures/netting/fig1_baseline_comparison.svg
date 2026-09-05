@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="310" viewBox="0 0 980 310">
+<rect width="100%" height="100%" fill="white"/>
+<style>
+text{font-family:'Times New Roman',DejaVu Serif,serif;fill:#222}
+.axis{stroke:#333;stroke-width:1}
+.grid{stroke:#D0D0D0;stroke-width:0.7;opacity:0.45}
+.tick{font-size:11px}
+.label{font-size:13px;font-weight:600}
+.legend{font-size:12px}
+</style>
+<text x="18" y="22" font-size="18" font-weight="700">Baseline comparison</text>
+<line class="grid" x1="30" y1="272.0" x2="315" y2="272.0"/>
+<text class="tick" x="22" y="276.0" text-anchor="end">0.00</text>
+<line class="grid" x1="30" y1="217.0" x2="315" y2="217.0"/>
+<text class="tick" x="22" y="221.0" text-anchor="end">0.73</text>
+<line class="grid" x1="30" y1="162.0" x2="315" y2="162.0"/>
+<text class="tick" x="22" y="166.0" text-anchor="end">1.46</text>
+<line class="grid" x1="30" y1="107.0" x2="315" y2="107.0"/>
+<text class="tick" x="22" y="111.0" text-anchor="end">2.18</text>
+<line class="grid" x1="30" y1="52.0" x2="315" y2="52.0"/>
+<text class="tick" x="22" y="56.0" text-anchor="end">2.91</text>
+<line class="axis" x1="30" y1="272" x2="315" y2="272"/>
+<line class="axis" x1="30" y1="52" x2="30" y2="272"/>
+<text class="label" x="172.5" y="310" text-anchor="middle"></text>
+<text class="label" transform="translate(-12,162.0) rotate(-90)" text-anchor="middle">Throughput (tx/s)</text>
+<rect x="50.0" y="99.7" width="55.1" height="172.3" fill="#8C8C8C"/>
+<text class="tick" x="77.5" y="290" text-anchor="middle">Relay</text>
+<text class="tick" x="77.5" y="94.7" text-anchor="middle">2.28</text>
+<rect x="144.9" y="112.6" width="55.1" height="159.4" fill="#4C72B0"/>
+<text class="tick" x="172.5" y="290" text-anchor="middle">Broker</text>
+<text class="tick" x="172.5" y="107.6" text-anchor="middle">2.11</text>
+<rect x="239.9" y="85.6" width="55.1" height="186.4" fill="#C44E52"/>
+<text class="tick" x="267.5" y="290" text-anchor="middle">Netting</text>
+<text class="tick" x="267.5" y="80.6" text-anchor="middle">2.47</text>
+<line class="grid" x1="350" y1="272.0" x2="635" y2="272.0"/>
+<text class="tick" x="342" y="276.0" text-anchor="end">0.00</text>
+<line class="grid" x1="350" y1="217.0" x2="635" y2="217.0"/>
+<text class="tick" x="342" y="221.0" text-anchor="end">2.64</text>
+<line class="grid" x1="350" y1="162.0" x2="635" y2="162.0"/>
+<text class="tick" x="342" y="166.0" text-anchor="end">5.29</text>
+<line class="grid" x1="350" y1="107.0" x2="635" y2="107.0"/>
+<text class="tick" x="342" y="111.0" text-anchor="end">7.93</text>
+<line class="grid" x1="350" y1="52.0" x2="635" y2="52.0"/>
+<text class="tick" x="342" y="56.0" text-anchor="end">10.6</text>
+<line class="axis" x1="350" y1="272" x2="635" y2="272"/>
+<line class="axis" x1="350" y1="52" x2="350" y2="272"/>
+<text class="label" x="492.5" y="310" text-anchor="middle"></text>
+<text class="label" transform="translate(308,162.0) rotate(-90)" text-anchor="middle">Avg. latency (s)</text>
+<rect x="369.9" y="195.9" width="55.1" height="76.1" fill="#8C8C8C"/>
+<text class="tick" x="397.5" y="290" text-anchor="middle">Relay</text>
+<text class="tick" x="397.5" y="190.9" text-anchor="middle">3.66</text>
+<rect x="464.9" y="217.4" width="55.1" height="54.6" fill="#4C72B0"/>
+<text class="tick" x="492.5" y="290" text-anchor="middle">Broker</text>
+<text class="tick" x="492.5" y="212.4" text-anchor="middle">2.62</text>
+<rect x="560.0" y="85.6" width="55.1" height="186.4" fill="#C44E52"/>
+<text class="tick" x="587.5" y="290" text-anchor="middle">Netting</text>
+<text class="tick" x="587.5" y="80.6" text-anchor="middle">8.96</text>
+<line class="grid" x1="670" y1="272.0" x2="955" y2="272.0"/>
+<text class="tick" x="662" y="276.0" text-anchor="end">0.00</text>
+<line class="grid" x1="670" y1="217.0" x2="955" y2="217.0"/>
+<text class="tick" x="662" y="221.0" text-anchor="end">0.46</text>
+<line class="grid" x1="670" y1="162.0" x2="955" y2="162.0"/>
+<text class="tick" x="662" y="166.0" text-anchor="end">0.92</text>
+<line class="grid" x1="670" y1="107.0" x2="955" y2="107.0"/>
+<text class="tick" x="662" y="111.0" text-anchor="end">1.38</text>
+<line class="grid" x1="670" y1="52.0" x2="955" y2="52.0"/>
+<text class="tick" x="662" y="56.0" text-anchor="end">1.84</text>
+<line class="axis" x1="670" y1="272" x2="955" y2="272"/>
+<line class="axis" x1="670" y1="52" x2="670" y2="272"/>
+<text class="label" x="812.5" y="310" text-anchor="middle"></text>
+<text class="label" transform="translate(628,162.0) rotate(-90)" text-anchor="middle">Cross-shard msgs / tx</text>
+<rect x="690.0" y="85.6" width="55.1" height="186.4" fill="#8C8C8C"/>
+<text class="tick" x="717.5" y="290" text-anchor="middle">Relay</text>
+<text class="tick" x="717.5" y="80.6" text-anchor="middle">1.56</text>
+<rect x="785.0" y="249.6" width="55.1" height="22.4" fill="#4C72B0"/>
+<text class="tick" x="812.5" y="290" text-anchor="middle">Broker</text>
+<text class="tick" x="812.5" y="244.6" text-anchor="middle">0.19</text>
+<rect x="880.0" y="248.1" width="55.1" height="23.9" fill="#C44E52"/>
+<text class="tick" x="907.5" y="290" text-anchor="middle">Netting</text>
+<text class="tick" x="907.5" y="243.1" text-anchor="middle">0.20</text>
+</svg>

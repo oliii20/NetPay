@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="310" viewBox="0 0 640 310">
+<rect width="100%" height="100%" fill="white"/>
+<style>
+text{font-family:'Times New Roman',DejaVu Serif,serif;fill:#222}
+.axis{stroke:#333;stroke-width:1}
+.grid{stroke:#D0D0D0;stroke-width:0.7;opacity:0.45}
+.tick{font-size:11px}
+.label{font-size:13px;font-weight:600}
+.legend{font-size:12px}
+</style>
+<text x="18" y="22" font-size="18" font-weight="700">Netting benefit under bidirectional traffic</text>
+<line class="grid" x1="55" y1="272.0" x2="595" y2="272.0"/>
+<text class="tick" x="47" y="276.0" text-anchor="end">0.00</text>
+<line class="grid" x1="55" y1="217.0" x2="595" y2="217.0"/>
+<text class="tick" x="47" y="221.0" text-anchor="end">0.25</text>
+<line class="grid" x1="55" y1="162.0" x2="595" y2="162.0"/>
+<text class="tick" x="47" y="166.0" text-anchor="end">0.50</text>
+<line class="grid" x1="55" y1="107.0" x2="595" y2="107.0"/>
+<text class="tick" x="47" y="111.0" text-anchor="end">0.75</text>
+<line class="grid" x1="55" y1="52.0" x2="595" y2="52.0"/>
+<text class="tick" x="47" y="56.0" text-anchor="end">1.00</text>
+<line class="axis" x1="55" y1="272" x2="595" y2="272"/>
+<line class="axis" x1="55" y1="52" x2="55" y2="272"/>
+<text class="label" x="325.0" y="310" text-anchor="middle">Reverse traffic ratio</text>
+<text class="label" transform="translate(13,162.0) rotate(-90)" text-anchor="middle">Value ratio</text>
+<circle cx="55.0" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="595.0" cy="165.8" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<polyline points="55.0,272.0 595.0,165.8" fill="none" stroke="#C44E52" stroke-width="2"/>
+<line x1="63" y1="67" x2="81" y2="67" stroke="#C44E52" stroke-width="2"/>
+<text class="legend" x="86" y="71">Matched value</text>
+<circle cx="55.0" cy="52.0" r="3.4" fill="#4C72B0" stroke="white" stroke-width="0.8"/>
+<circle cx="595.0" cy="158.2" r="3.4" fill="#4C72B0" stroke="white" stroke-width="0.8"/>
+<polyline points="55.0,52.0 595.0,158.2" fill="none" stroke="#4C72B0" stroke-width="2"/>
+<line x1="183" y1="67" x2="201" y2="67" stroke="#4C72B0" stroke-width="2"/>
+<text class="legend" x="206" y="71">Fallback value</text>
+<line class="grid" x1="55.0" y1="52" x2="55.0" y2="272"/>
+<text class="tick" x="55.0" y="290" text-anchor="middle">0.00</text>
+<line class="grid" x1="190.0" y1="52" x2="190.0" y2="272"/>
+<text class="tick" x="190.0" y="290" text-anchor="middle">0.25</text>
+<line class="grid" x1="325.0" y1="52" x2="325.0" y2="272"/>
+<text class="tick" x="325.0" y="290" text-anchor="middle">0.50</text>
+<line class="grid" x1="460.0" y1="52" x2="460.0" y2="272"/>
+<text class="tick" x="460.0" y="290" text-anchor="middle">0.75</text>
+<line class="grid" x1="595.0" y1="52" x2="595.0" y2="272"/>
+<text class="tick" x="595.0" y="290" text-anchor="middle">1.00</text>
+</svg>
