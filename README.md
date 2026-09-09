@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # BlockEmulator-X (advanced version of BlockEmulator)
 
 
@@ -871,3 +872,6 @@ It defines four log levels (Debug, Info, Warn, and Error), allowing the system t
 
 **The logging mechanisms—such as printing rules and output destinations—are defined in `pkg/logger`**.
 Detailed usage guidelines can be found in the comments of the `config.yaml` configuration file.
+=======
+# NetPay
+>>>>>>> netpay/main
