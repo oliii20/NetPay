@@ -388,6 +388,7 @@ def is_hex_address(value: str) -> bool:
 def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
     go_bin = resolve_go_binary(go_cmd)
     go_env = native_go_build_env(go_bin, repo)
+    build_flags = ["-buildmode=exe"] if os.name == "nt" else []
     bin_dir.mkdir(parents=True, exist_ok=True)
     clean_stale_binaries(bin_dir, ["consensusnode", "beaconnode", "solver", "supervisor"])
     commands = [
@@ -395,6 +396,7 @@ def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
         [
             go_bin,
             "build",
+            *build_flags,
             "-o",
             str(bin_dir / executable_name("consensusnode")),
             "./cmd/consensusnode",
@@ -402,14 +404,23 @@ def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
         [
             go_bin,
             "build",
+            *build_flags,
             "-o",
             str(bin_dir / executable_name("beaconnode")),
             "./cmd/beaconnode",
         ],
-        [go_bin, "build", "-o", str(bin_dir / executable_name("solver")), "./cmd/solver"],
         [
             go_bin,
             "build",
+            *build_flags,
+            "-o",
+            str(bin_dir / executable_name("solver")),
+            "./cmd/solver",
+        ],
+        [
+            go_bin,
+            "build",
+            *build_flags,
             "-o",
             str(bin_dir / executable_name("supervisor")),
             "./cmd/supervisor",
@@ -441,6 +452,9 @@ def native_go_build_env(go_bin: str, repo: Path) -> dict[str, str]:
 
     env["GOOS"] = values[0]
     env["GOARCH"] = values[1]
+    env.pop("GOFLAGS", None)
+    if env["GOOS"] == "windows" and env["GOARCH"] == "amd64":
+        env["GOAMD64"] = "v1"
     return env
 
 
@@ -494,10 +508,28 @@ def binary_diagnostic(path: Path) -> str:
     try:
         size = path.stat().st_size
         with path.open("rb") as fp:
-            magic = fp.read(4).hex(" ")
-        return f"binary size={size} bytes magic={magic}"
+            data = fp.read(256)
+        return f"binary size={size} bytes {pe_diagnostic(data)}"
     except OSError as err:
         return f"could not inspect binary: {err}"
+
+
+def pe_diagnostic(data: bytes) -> str:
+    magic = data[:4].hex(" ")
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return f"magic={magic}"
+
+    pe_offset = int.from_bytes(data[0x3C:0x40], "little")
+    if pe_offset + 6 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
+        return f"magic={magic} pe=missing"
+
+    machine = int.from_bytes(data[pe_offset + 4 : pe_offset + 6], "little")
+    machine_name = {
+        0x014C: "386",
+        0x8664: "amd64",
+        0xAA64: "arm64",
+    }.get(machine, f"unknown-0x{machine:04x}")
+    return f"magic={magic} pe_machine={machine_name}"
 
 
 def run_one(
@@ -944,6 +976,7 @@ def summarize_netting(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[st
         "capital_lock_s": mean(capital),
         "watermark_skew": mean([float_or_zero(row.get("WatermarkSkew")) for row in batches]),
         "batch_count": batch_count,
+        **netting_stage_latencies(batches, intents),
     }
 
 
@@ -974,6 +1007,7 @@ def summarize_relay(run_dir: Path, spec: RunSpec) -> dict[str, object]:
         "capital_lock_s": 0.0,
         "watermark_skew": 0.0,
         "batch_count": 0,
+        **relay_stage_latencies(detail),
     }
 
 
@@ -1005,7 +1039,100 @@ def summarize_broker(run_dir: Path, spec: RunSpec) -> dict[str, object]:
         "capital_lock_s": 0.0,
         "watermark_skew": 0.0,
         "batch_count": 0,
+        **broker_stage_latencies(detail),
     }
+
+
+def empty_stage_latencies() -> dict[str, float]:
+    return {
+        "stage_source_s": 0.0,
+        "stage_second_hop_s": 0.0,
+        "stage_window_s": 0.0,
+        "stage_match_s": 0.0,
+        "stage_beacon_s": 0.0,
+        "stage_settlement_s": 0.0,
+        "stage_fallback_s": 0.0,
+    }
+
+
+def netting_stage_latencies(batches: list[dict[str, str]], intents: list[dict[str, str]]) -> dict[str, float]:
+    completed = [row for row in intents if float_or_zero(row.get("EndToEndLatencyNs")) > 0]
+    completed_count = max(1, len(completed))
+    reservation_s = mean(float_or_zero(row.get("ReservationLatencyNs")) / 1e9 for row in completed)
+    window_s = mean(float_or_zero(row.get("WindowOpenDurationNs")) / 1e9 for row in batches)
+    match_s = mean(float_or_zero(row.get("MatchTimeNs")) / 1e9 for row in batches)
+    beacon_s = mean(float_or_zero(row.get("BeaconConsensusLatencyNs")) / 1e9 for row in batches)
+    settlement_total_s = mean(float_or_zero(row.get("SettlementLatencyNs")) / 1e9 for row in completed)
+    fallback_s = sum(
+        parse_duration_from_times(row.get("SettledAt", ""), row.get("CompletedAt", ""))
+        for row in completed
+        if row.get("UsedFallback") == "true"
+    ) / completed_count
+    stages = empty_stage_latencies()
+    stages.update(
+        {
+            "stage_source_s": reservation_s,
+            "stage_window_s": window_s,
+            "stage_match_s": match_s,
+            "stage_beacon_s": beacon_s,
+            "stage_settlement_s": max(0.0, settlement_total_s - window_s - match_s - beacon_s),
+            "stage_fallback_s": fallback_s,
+        }
+    )
+    return stages
+
+
+def relay_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
+    stages = empty_stage_latencies()
+    total = max(1, len(detail))
+    for row in detail:
+        if (
+            row.get("Is cross-shard tx or not") == "true"
+            and row.get("Relay1 tx commit time")
+            and row.get("Relay2 tx commit time")
+        ):
+            stages["stage_source_s"] += parse_duration_from_times(
+                row.get("Tx create time", ""), row.get("Relay1 tx commit time", "")
+            )
+            stages["stage_second_hop_s"] += parse_duration_from_times(
+                row.get("Relay1 tx commit time", ""), row.get("Relay2 tx commit time", "")
+            )
+        elif row.get("Tx finally commit time"):
+            stages["stage_source_s"] += parse_duration_from_times(
+                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
+            )
+    stages["stage_source_s"] /= total
+    stages["stage_second_hop_s"] /= total
+    return stages
+
+
+def broker_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
+    stages = empty_stage_latencies()
+    total = max(1, len(detail))
+    for row in detail:
+        if (
+            row.get("Mechanism") == "Broker"
+            and row.get("Broker1 tx commit time")
+            and row.get("Broker2 tx commit time")
+        ):
+            stages["stage_source_s"] += parse_duration_from_times(
+                row.get("Tx create time", ""), row.get("Broker1 tx commit time", "")
+            )
+            stages["stage_second_hop_s"] += parse_duration_from_times(
+                row.get("Broker1 tx commit time", ""), row.get("Broker2 tx commit time", "")
+            )
+        elif row.get("Mechanism") == "FallbackToRelay" and row.get("Tx finally commit time"):
+            stages["stage_fallback_s"] += parse_duration_from_times(
+                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
+            )
+        elif row.get("Tx finally commit time"):
+            stages["stage_source_s"] += parse_duration_from_times(
+                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
+            )
+    stages["stage_source_s"] /= total
+    stages["stage_second_hop_s"] /= total
+    stages["stage_fallback_s"] /= total
+    return stages
 
 
 def read_dicts(path: Path) -> list[dict[str, str]]:
@@ -1073,7 +1200,8 @@ SUMMARY_FIELDS = [
     "p95_latency_s", "matched_value_ratio", "fallback_value_ratio", "matched_intent_ratio",
     "fallback_intent_ratio", "split_allocations", "match_time_ms", "proof_time_ms",
     "beacon_bytes_per_intent", "cross_messages_per_tx", "capital_lock_s", "watermark_skew",
-    "batch_count",
+    "batch_count", "stage_source_s", "stage_second_hop_s", "stage_window_s", "stage_match_s",
+    "stage_beacon_s", "stage_settlement_s", "stage_fallback_s",
 ]
 
 

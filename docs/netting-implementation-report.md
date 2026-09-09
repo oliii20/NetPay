@@ -68,7 +68,7 @@
 
 | 实验 | 自变量/方法 | 指标 | 论文中回答的问题 |
 | --- | --- | --- | --- |
-| 1 Baseline | static_relay、static_broker、netting_static_relay | matched_intent_ratio、throughput、latency、cross_messages_per_tx | 展示你的机制是否减少逐笔跨片消息和目标分片处理。 |
+| 1 Baseline | static_relay、static_broker、netting_static_relay | matched_intent_ratio、throughput、latency、stage latency breakdown、cross_messages_per_tx | 展示你的机制是否减少逐笔跨片消息，并定位端到端延迟主要消耗在哪个阶段。 |
 | 2 Netting benefit | reverse_ratio = 0%,25%,50%,75%,100% | matched_intent_ratio、matched_value_ratio、fallback_value_ratio | 证明双向流量越强，净额化收益越高。 |
 | 3 BatchSize | 10,20,50,100,200 | matched_intent_ratio、throughput、beacon_bytes_per_intent、avg_latency_s | 展示批量摊销收益与等待/锁资成本的权衡。 |
 | 4 MaxWindowDuration | 100ms,500ms,1s,2s,5s | matched_intent_ratio、matched_value_ratio、avg_latency_s | 展示撮合窗口越长，撮合率和端到端延迟之间的 trade-off。 |

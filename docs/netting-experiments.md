@@ -59,9 +59,7 @@ The runner writes built executables under `.exp/netting-paper/bin/`. On Windows
 it automatically uses `.exe` names, while Unix-like systems keep extensionless
 binary names. It also builds for Go's native `GOHOSTOS/GOHOSTARCH` target, so
 stale `GOOS` or `GOARCH` environment variables do not accidentally produce a
-non-Windows executable named `*.exe`. Windows builds use `-buildmode=exe` and
-clear `GOFLAGS` for the runner's build step, avoiding global Go flags that can
-produce a PE file that is not launchable as an application.
+non-Windows executable named `*.exe`.
 
 Use `--tx-number` and `--tx-speed` to override the workload size and injection
 rate chosen by `--profile`.
@@ -78,6 +76,10 @@ python3 scripts/netting_experiments/plot_experiments.py
 
 Every generated figure includes `matched_intent_ratio` as the matching-rate
 metric.
+
+Experiment 1 also writes a stage-latency breakdown figure. The runner stores
+stage latency columns in `summary.csv`, and the plotting script can derive them
+from the raw per-run CSV files when plotting an older summary.
 
 ## Experiment groups
 
@@ -107,6 +109,7 @@ The runner writes:
 The plotting script writes the available PNG files under `figures/netting/`:
 
 - `fig1_baseline_comparison.png`
+- `fig1_stage_latency_breakdown.png`
 - `fig2_netting_balance.png`
 - `fig3_batch_size.png`
 - `fig4_window_duration.png`
