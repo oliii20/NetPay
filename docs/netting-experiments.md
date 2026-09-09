@@ -45,23 +45,22 @@ GOCACHE="$PWD/.exp/gocache" python3 scripts/netting_experiments/run_experiments.
 Windows `cmd.exe` example:
 
 ```bat
-set "GOCACHE=%CD%\.exp\gocache" && python scripts\netting_experiments\run_experiments.py --profile full --seeds 1 --experiments exp1 --tx-number 50000 --tx-speed 2000 --timeout 1000 --progress-interval 20 --dataset "D:\path\to\selectedTxs_300K.csv"
+set "GOCACHE=%CD%\.exp\gocache" && python scripts\netting_experiments\run_experiments.py --profile full --seeds 1 --experiments exp1 --tx-number 50000 --tx-speed 2000 --timeout 1000 --progress-interval 20 --go-arch 386 --dataset "D:\path\to\selectedTxs_300K.csv"
 ```
 
 Before running on Windows, make sure `go version` works in the same `cmd.exe`
 window. If Go is installed but not on `PATH`, pass the compiler explicitly:
 
 ```bat
-set "GOCACHE=%CD%\.exp\gocache" && python scripts\netting_experiments\run_experiments.py --go "C:\Program Files\Go\bin\go.exe" --profile full --seeds 1 --experiments exp1 --tx-number 3000 --tx-speed 500 --timeout 600 --progress-interval 20
+set "GOCACHE=%CD%\.exp\gocache" && python scripts\netting_experiments\run_experiments.py --go "C:\Program Files\Go\bin\go.exe" --go-arch 386 --profile full --seeds 1 --experiments exp1 --tx-number 3000 --tx-speed 500 --timeout 600 --progress-interval 20
 ```
 
 The runner writes built executables under `.exp/netting-paper/bin/`. On Windows
 it automatically uses `.exe` names, while Unix-like systems keep extensionless
-binary names. It also builds for Go's native `GOHOSTOS/GOHOSTARCH` target, so
-stale `GOOS` or `GOARCH` environment variables do not accidentally produce a
-non-Windows executable named `*.exe`. Windows builds use `-buildmode=exe` and
-clear `GOFLAGS` for the runner's build step, avoiding global Go flags that can
-produce a PE file that is not launchable as an application.
+binary names. It ignores stale `GOOS` or `GOARCH` environment variables. The
+default `--go-arch auto` builds `386` on Windows for broad compatibility and
+uses Go's native `GOHOSTARCH` on Unix-like systems. Pass `--go-arch native` or
+`--go-arch amd64` to force a native 64-bit Windows build.
 
 Use `--tx-number` and `--tx-speed` to override the workload size and injection
 rate chosen by `--profile`.

@@ -80,6 +80,12 @@ def main() -> int:
     parser.add_argument("--tx-number", type=positive_int, help="override profile tx_number")
     parser.add_argument("--tx-speed", type=positive_int, help="override profile tx_injection_speed")
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
+    parser.add_argument(
+        "--go-arch",
+        choices=["auto", "native", "386", "amd64", "arm64"],
+        default="auto",
+        help="Go target architecture; auto uses 386 on Windows for compatibility",
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout", type=int, default=500)
@@ -106,7 +112,7 @@ def main() -> int:
 
     dataset_rows = load_dataset(dataset_path)
     if not args.skip_build:
-        build_binaries(repo, out_dir / "bin", args.go)
+        build_binaries(repo, out_dir / "bin", args.go, args.go_arch)
 
     summary_path = out_dir / "summary.csv"
     runs_path = out_dir / "runs.jsonl"
@@ -385,12 +391,13 @@ def is_hex_address(value: str) -> bool:
         return False
 
 
-def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
+def build_binaries(repo: Path, bin_dir: Path, go_cmd: str, go_arch: str) -> None:
     go_bin = resolve_go_binary(go_cmd)
-    go_env = native_go_build_env(go_bin, repo)
+    go_env = native_go_build_env(go_bin, repo, go_arch)
     build_flags = ["-buildmode=exe"] if os.name == "nt" else []
     bin_dir.mkdir(parents=True, exist_ok=True)
     clean_stale_binaries(bin_dir, ["consensusnode", "beaconnode", "solver", "supervisor"])
+    print(f"building Go binaries for {go_env['GOOS']}/{go_env['GOARCH']}", flush=True)
     commands = [
         [go_bin, "mod", "download"],
         [
@@ -433,7 +440,7 @@ def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
             raise SystemExit(f"failed to run {cmd[0]!r}: {err}") from err
 
 
-def native_go_build_env(go_bin: str, repo: Path) -> dict[str, str]:
+def native_go_build_env(go_bin: str, repo: Path, go_arch: str) -> dict[str, str]:
     env = os.environ.copy()
     try:
         result = subprocess.run(
@@ -450,8 +457,14 @@ def native_go_build_env(go_bin: str, repo: Path) -> dict[str, str]:
     if len(values) != 2:
         raise SystemExit(f"failed to detect native Go target with {go_bin!r}: {result.stdout!r}")
 
-    env["GOOS"] = values[0]
-    env["GOARCH"] = values[1]
+    host_os, host_arch = values
+    env["GOOS"] = host_os
+    if go_arch == "auto":
+        env["GOARCH"] = "386" if host_os == "windows" else host_arch
+    elif go_arch == "native":
+        env["GOARCH"] = host_arch
+    else:
+        env["GOARCH"] = go_arch
     env.pop("GOFLAGS", None)
     if env["GOOS"] == "windows" and env["GOARCH"] == "amd64":
         env["GOAMD64"] = "v1"
