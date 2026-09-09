@@ -574,7 +574,10 @@ def run_one(
         supervisor = processes[-1]
         wait_with_progress(supervisor, spec.run_id, started_at, timeout_s, progress_interval_s)
         if supervisor.returncode != 0:
-            raise RuntimeError(f"supervisor exited with {supervisor.returncode}")
+            raise RuntimeError(
+                f"supervisor exited with {supervisor.returncode}\n"
+                f"{process_log_summary(process_log_dir)}"
+            )
     finally:
         terminate_all(processes)
     elapsed = time.time() - started_at
@@ -645,6 +648,22 @@ def write_progress(
     else:
         print(message, flush=True)
     return len(message)
+
+
+def process_log_summary(log_dir: Path, max_lines: int = 40) -> str:
+    paths = sorted(log_dir.glob("*.log"), key=lambda path: (path.name != "supervisor.log", path.name))
+    sections: list[str] = []
+    for path in paths:
+        text = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        if not text:
+            continue
+        tail = text[-max_lines:]
+        sections.append(f"--- {path.name} tail ---\n" + "\n".join(tail))
+        if len(sections) >= 3:
+            break
+    if not sections:
+        return f"no process logs found under {log_dir}"
+    return "\n".join(sections)
 
 
 def format_duration(seconds: float) -> str:
@@ -828,7 +847,16 @@ def address_for_shard(shard: int, shard_num: int, nonce: int) -> str:
     return "0x" + data.hex()
 
 
+def config_path(path: Path, trailing_slash: bool = False) -> str:
+    value = path.as_posix()
+    if trailing_slash and not value.endswith("/"):
+        return value + "/"
+    return value
+
+
 def write_config(path: Path, run_dir: Path, workload_path: Path, spec: RunSpec) -> None:
+    run_dir_cfg = config_path(run_dir, trailing_slash=True)
+    workload_cfg = config_path(workload_path)
     intervals = ""
     if spec.shard_block_intervals_ms:
         intervals = "  shard_block_intervals_ms:\n"
@@ -841,7 +869,7 @@ def write_config(path: Path, run_dir: Path, workload_path: Path, spec: RunSpec) 
   limit: 100
   consensus_type: "{spec.consensus_type}"
   log:
-    log_dir: "{run_dir}/"
+    log_dir: "{run_dir_cfg}"
     log_level: "info"
 
 consensus_node:
@@ -853,18 +881,18 @@ consensus_node:
       block_storage_type: "bolt"
       trie_storage_type: "eth_level_db"
       bolt:
-        file_path_dir: "{run_dir}/boltdb/"
+        file_path_dir: "{run_dir_cfg}boltdb/"
       eth_storage:
         is_memory_db: true
-        level_file_path_dir: "{run_dir}/trie_db/"
+        level_file_path_dir: "{run_dir_cfg}trie_db/"
         old_state_root: ""
     vm:
       chain_id: 11
-      vm_state_dir: "{run_dir}/vm_state/"
+      vm_state_dir: "{run_dir_cfg}vm_state/"
   tx_pool:
     type: "number"
   block_interval: {spec.block_interval_ms}
-{intervals}  block_record_dir: "{run_dir}/block_record/"
+{intervals}  block_record_dir: "{run_dir_cfg}block_record/"
 
 netting:
   enabled: {str(spec.netting_enabled).lower()}
@@ -873,17 +901,17 @@ netting:
   max_window_duration_ms: {spec.max_window_ms}
   solver_tick_interval_ms: 100
   matcher_mode: "{spec.matcher_mode}"
-  batch_store_path: "{run_dir}/netting/solver.db"
-  beacon_store_path: "{run_dir}/netting/beacon.db"
+  batch_store_path: "{run_dir_cfg}netting/solver.db"
+  beacon_store_path: "{run_dir_cfg}netting/beacon.db"
 
 supervisor:
   tx_number: {spec.tx_number}
   tx_injection_speed: {spec.tx_speed}
-  result_output_dir: "{run_dir}/results/"
+  result_output_dir: "{run_dir_cfg}results/"
   epoch_duration: 50
   tx_source:
     tx_source_type: "csv_source"
-    tx_source_file: "{workload_path}"
+    tx_source_file: "{workload_cfg}"
     exclude_contract_txs: true
   broker_module:
     broker_file_path: "./pkg/broker/broker"
