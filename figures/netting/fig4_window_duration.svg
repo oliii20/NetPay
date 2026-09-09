@@ -23,48 +23,54 @@ text{font-family:'Times New Roman',DejaVu Serif,serif;fill:#222}
 <line class="axis" x1="55" y1="52" x2="55" y2="272"/>
 <text class="label" x="225.0" y="310" text-anchor="middle">MaxWindowDuration (ms)</text>
 <text class="label" transform="translate(13,162.0) rotate(-90)" text-anchor="middle">Matched value ratio</text>
-<circle cx="55.0" cy="185.5" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
-<circle cx="395.0" cy="178.2" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
-<polyline points="55.0,185.5 395.0,178.2" fill="none" stroke="#C44E52" stroke-width="2"/>
+<circle cx="55.0" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="82.8" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="117.4" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="186.8" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="395.0" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<polyline points="55.0,272.0 82.8,272.0 117.4,272.0 186.8,272.0 395.0,272.0" fill="none" stroke="#C44E52" stroke-width="2"/>
 <line x1="63" y1="67" x2="81" y2="67" stroke="#C44E52" stroke-width="2"/>
 <text class="legend" x="86" y="71">Matched value</text>
 <line class="grid" x1="55.0" y1="52" x2="55.0" y2="272"/>
-<text class="tick" x="55.0" y="290" text-anchor="middle">250</text>
+<text class="tick" x="55.0" y="290" text-anchor="middle">100</text>
 <line class="grid" x1="140.0" y1="52" x2="140.0" y2="272"/>
-<text class="tick" x="140.0" y="290" text-anchor="middle">438</text>
+<text class="tick" x="140.0" y="290" text-anchor="middle">1325</text>
 <line class="grid" x1="225.0" y1="52" x2="225.0" y2="272"/>
-<text class="tick" x="225.0" y="290" text-anchor="middle">625</text>
+<text class="tick" x="225.0" y="290" text-anchor="middle">2550</text>
 <line class="grid" x1="310.0" y1="52" x2="310.0" y2="272"/>
-<text class="tick" x="310.0" y="290" text-anchor="middle">812</text>
+<text class="tick" x="310.0" y="290" text-anchor="middle">3775</text>
 <line class="grid" x1="395.0" y1="52" x2="395.0" y2="272"/>
-<text class="tick" x="395.0" y="290" text-anchor="middle">1000</text>
+<text class="tick" x="395.0" y="290" text-anchor="middle">5000</text>
 <line class="grid" x1="480" y1="272.0" x2="800" y2="272.0"/>
 <text class="tick" x="472" y="276.0" text-anchor="end">0.00</text>
 <line class="grid" x1="480" y1="217.0" x2="800" y2="217.0"/>
-<text class="tick" x="472" y="221.0" text-anchor="end">2.64</text>
+<text class="tick" x="472" y="221.0" text-anchor="end">6.64</text>
 <line class="grid" x1="480" y1="162.0" x2="800" y2="162.0"/>
-<text class="tick" x="472" y="166.0" text-anchor="end">5.28</text>
+<text class="tick" x="472" y="166.0" text-anchor="end">13.3</text>
 <line class="grid" x1="480" y1="107.0" x2="800" y2="107.0"/>
-<text class="tick" x="472" y="111.0" text-anchor="end">7.93</text>
+<text class="tick" x="472" y="111.0" text-anchor="end">19.9</text>
 <line class="grid" x1="480" y1="52.0" x2="800" y2="52.0"/>
-<text class="tick" x="472" y="56.0" text-anchor="end">10.6</text>
+<text class="tick" x="472" y="56.0" text-anchor="end">26.6</text>
 <line class="axis" x1="480" y1="272" x2="800" y2="272"/>
 <line class="axis" x1="480" y1="52" x2="480" y2="272"/>
 <text class="label" x="640.0" y="310" text-anchor="middle">MaxWindowDuration (ms)</text>
 <text class="label" transform="translate(438,162.0) rotate(-90)" text-anchor="middle">Avg. latency (s)</text>
-<circle cx="480.0" cy="121.5" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
-<circle cx="800.0" cy="85.6" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
-<polyline points="480.0,121.5 800.0,85.6" fill="none" stroke="#C44E52" stroke-width="2"/>
+<circle cx="480.0" cy="98.9" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="506.1" cy="107.1" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="538.8" cy="85.6" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="604.1" cy="119.3" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="800.0" cy="109.7" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<polyline points="480.0,98.9 506.1,107.1 538.8,85.6 604.1,119.3 800.0,109.7" fill="none" stroke="#C44E52" stroke-width="2"/>
 <line x1="488" y1="67" x2="506" y2="67" stroke="#C44E52" stroke-width="2"/>
 <text class="legend" x="511" y="71">Latency</text>
 <line class="grid" x1="480.0" y1="52" x2="480.0" y2="272"/>
-<text class="tick" x="480.0" y="290" text-anchor="middle">250</text>
+<text class="tick" x="480.0" y="290" text-anchor="middle">100</text>
 <line class="grid" x1="560.0" y1="52" x2="560.0" y2="272"/>
-<text class="tick" x="560.0" y="290" text-anchor="middle">438</text>
+<text class="tick" x="560.0" y="290" text-anchor="middle">1325</text>
 <line class="grid" x1="640.0" y1="52" x2="640.0" y2="272"/>
-<text class="tick" x="640.0" y="290" text-anchor="middle">625</text>
+<text class="tick" x="640.0" y="290" text-anchor="middle">2550</text>
 <line class="grid" x1="720.0" y1="52" x2="720.0" y2="272"/>
-<text class="tick" x="720.0" y="290" text-anchor="middle">812</text>
+<text class="tick" x="720.0" y="290" text-anchor="middle">3775</text>
 <line class="grid" x1="800.0" y1="52" x2="800.0" y2="272"/>
-<text class="tick" x="800.0" y="290" text-anchor="middle">1000</text>
+<text class="tick" x="800.0" y="290" text-anchor="middle">5000</text>
 </svg>

@@ -77,5 +77,17 @@ func TestNettingWorkloadConvertsCrossShardTransactionsAndTracksCompletion(t *tes
 	})
 	require.NoError(t, err)
 	require.NoError(t, executionOnly.handleExecutionMetric(executionWrapped))
+	require.False(t, executionOnly.finished())
+
+	executionWrapped, err = message.WrapMsg(&message.NettingExecutionMetricMsg{
+		NodeID: 0,
+		Metrics: []model.NettingExecutionMetric{{
+			Phase:    model.MetricPhaseSettlement,
+			IntentID: executionID,
+			Final:    true,
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, executionOnly.handleExecutionMetric(executionWrapped))
 	require.True(t, executionOnly.finished())
 }

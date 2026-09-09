@@ -80,7 +80,13 @@ def main() -> int:
     parser.add_argument("--seeds", default="", help="override seeds, e.g. 1,2,3")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--timeout", type=int, default=500)
+    parser.add_argument(
+        "--progress-interval",
+        type=int,
+        default=1,
+        help="seconds between per-run elapsed-time progress refreshes; use 0 to disable",
+    )
     args = parser.parse_args()
 
     repo = Path.cwd()
@@ -106,7 +112,16 @@ def main() -> int:
             run_dir = args.out / "runs" / spec.run_id
             base_port = 24000 + (idx % 40) * 900
             print(f"[{idx + 1}/{len(specs)}] {spec.run_id}", flush=True)
-            result = run_one(repo, args.out / "bin", run_dir, spec, dataset_rows, base_port, args.timeout)
+            result = run_one(
+                repo,
+                args.out / "bin",
+                run_dir,
+                spec,
+                dataset_rows,
+                base_port,
+                args.timeout,
+                args.progress_interval,
+            )
             append_summary(summary_path, result)
             runs_fp.write(json.dumps(result, sort_keys=True) + "\n")
             runs_fp.flush()
@@ -155,7 +170,7 @@ def build_specs(profile: str, selected: set[str], seeds: list[int]) -> list[RunS
         scale_points = [4, 8, 16]
         latency_points = [0, 25, 50, 100]
     else:
-        tx_number, tx_speed = 1000, 500
+        tx_number, tx_speed = 50000, 2000
         balance_points = [0.0, 0.25, 0.5, 0.75, 1.0]
         batch_points = [10, 20, 50, 100, 200]
         window_points = [100, 500, 1000, 2000, 5000]
@@ -358,6 +373,7 @@ def run_one(
     dataset_rows: list[list[str]],
     base_port: int,
     timeout_s: int,
+    progress_interval_s: int,
 ) -> dict[str, object]:
     if run_dir.exists():
         shutil.rmtree(run_dir)
@@ -376,16 +392,90 @@ def run_one(
     try:
         launch_cluster(repo, bin_dir, process_log_dir, config_path, ip_table_path, spec, processes)
         supervisor = processes[-1]
-        supervisor.wait(timeout=timeout_s)
+        wait_with_progress(supervisor, spec.run_id, started_at, timeout_s, progress_interval_s)
         if supervisor.returncode != 0:
             raise RuntimeError(f"supervisor exited with {supervisor.returncode}")
     finally:
         terminate_all(processes)
     elapsed = time.time() - started_at
+    print(f"  done {spec.run_id} in {format_duration(elapsed)}", flush=True)
     log_hits = scan_logs(run_dir)
     if log_hits:
         raise RuntimeError(f"{spec.run_id} has ERROR/WARN logs: {log_hits[:3]}")
     return summarize_run(run_dir, spec, elapsed)
+
+
+def wait_with_progress(
+    proc: subprocess.Popen[bytes],
+    run_id: str,
+    started_at: float,
+    timeout_s: int,
+    progress_interval_s: int,
+) -> None:
+    if progress_interval_s <= 0:
+        proc.wait(timeout=timeout_s)
+        return
+
+    deadline = started_at + timeout_s
+    interactive = sys.stdout.isatty()
+    printed_progress = False
+    last_progress_len = 0
+    next_progress_at = started_at
+    while True:
+        now = time.time()
+        remaining = deadline - now
+        if remaining <= 0:
+            if interactive and printed_progress:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+            raise subprocess.TimeoutExpired(proc.args, timeout_s)
+        if now >= next_progress_at:
+            last_progress_len = write_progress(
+                run_id,
+                time.time() - started_at,
+                timeout_s,
+                interactive,
+                last_progress_len,
+            )
+            printed_progress = True
+            next_progress_at = now + progress_interval_s
+        wait_s = min(max(0.1, next_progress_at - time.time()), remaining)
+        try:
+            proc.wait(timeout=wait_s)
+            if interactive and printed_progress:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def write_progress(
+    run_id: str,
+    elapsed_s: float,
+    timeout_s: int,
+    interactive: bool,
+    last_len: int,
+) -> int:
+    message = f"  running {run_id}: elapsed {format_duration(elapsed_s)} / timeout {format_duration(timeout_s)}"
+    if interactive:
+        padding = " " * max(0, last_len - len(message))
+        sys.stdout.write(f"\r{message}{padding}")
+        sys.stdout.flush()
+    else:
+        print(message, flush=True)
+    return len(message)
+
+
+def format_duration(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes:d}m{secs:02d}s"
+    return f"{secs:d}s"
 
 
 def launch_cluster(

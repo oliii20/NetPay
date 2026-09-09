@@ -24,13 +24,19 @@ text{font-family:'Times New Roman',DejaVu Serif,serif;fill:#222}
 <text class="label" x="325.0" y="310" text-anchor="middle">Reverse traffic ratio</text>
 <text class="label" transform="translate(13,162.0) rotate(-90)" text-anchor="middle">Value ratio</text>
 <circle cx="55.0" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
-<circle cx="595.0" cy="165.8" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
-<polyline points="55.0,272.0 595.0,165.8" fill="none" stroke="#C44E52" stroke-width="2"/>
+<circle cx="190.0" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="325.0" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="460.0" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<circle cx="595.0" cy="272.0" r="3.4" fill="#C44E52" stroke="white" stroke-width="0.8"/>
+<polyline points="55.0,272.0 190.0,272.0 325.0,272.0 460.0,272.0 595.0,272.0" fill="none" stroke="#C44E52" stroke-width="2"/>
 <line x1="63" y1="67" x2="81" y2="67" stroke="#C44E52" stroke-width="2"/>
 <text class="legend" x="86" y="71">Matched value</text>
 <circle cx="55.0" cy="52.0" r="3.4" fill="#4C72B0" stroke="white" stroke-width="0.8"/>
-<circle cx="595.0" cy="158.2" r="3.4" fill="#4C72B0" stroke="white" stroke-width="0.8"/>
-<polyline points="55.0,52.0 595.0,158.2" fill="none" stroke="#4C72B0" stroke-width="2"/>
+<circle cx="190.0" cy="52.0" r="3.4" fill="#4C72B0" stroke="white" stroke-width="0.8"/>
+<circle cx="325.0" cy="52.0" r="3.4" fill="#4C72B0" stroke="white" stroke-width="0.8"/>
+<circle cx="460.0" cy="52.0" r="3.4" fill="#4C72B0" stroke="white" stroke-width="0.8"/>
+<circle cx="595.0" cy="52.0" r="3.4" fill="#4C72B0" stroke="white" stroke-width="0.8"/>
+<polyline points="55.0,52.0 190.0,52.0 325.0,52.0 460.0,52.0 595.0,52.0" fill="none" stroke="#4C72B0" stroke-width="2"/>
 <line x1="183" y1="67" x2="201" y2="67" stroke="#4C72B0" stroke-width="2"/>
 <text class="legend" x="206" y="71">Fallback value</text>
 <line class="grid" x1="55.0" y1="52" x2="55.0" y2="272"/>

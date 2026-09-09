@@ -114,7 +114,14 @@ func (n *nettingWorkload) handleExecutionMetric(wrapped *rpcserver.WrappedMsg) e
 	}
 	for _, metric := range msg.Metrics {
 		switch metric.Phase {
-		case model.MetricPhaseSettlement, model.MetricPhaseFallback:
+		case model.MetricPhaseSettlement:
+			if !metric.Final {
+				continue
+			}
+			if _, exists := n.injected[metric.IntentID]; exists {
+				n.completed[metric.IntentID] = struct{}{}
+			}
+		case model.MetricPhaseFallback:
 			if _, exists := n.injected[metric.IntentID]; exists {
 				n.completed[metric.IntentID] = struct{}{}
 			}

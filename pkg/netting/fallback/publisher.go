@@ -3,6 +3,7 @@ package fallback
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
@@ -11,6 +12,8 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
 )
+
+const republishInterval = 5 * time.Second
 
 type PendingReader interface {
 	GetPendingFallbacks(context.Context) ([]model.ReservedFallback, error)
@@ -22,6 +25,7 @@ type Publisher struct {
 	chain    PendingReader
 	conn     *network.ConnHandler
 	resolver nodetopo.NodeMapper
+	lastSent map[model.FallbackKey]time.Time
 }
 
 func NewPublisher(
@@ -31,7 +35,10 @@ func NewPublisher(
 	conn *network.ConnHandler,
 	resolver nodetopo.NodeMapper,
 ) *Publisher {
-	return &Publisher{enabled: enabled, nodeID: nodeID, chain: chain, conn: conn, resolver: resolver}
+	return &Publisher{
+		enabled: enabled, nodeID: nodeID, chain: chain, conn: conn, resolver: resolver,
+		lastSent: make(map[model.FallbackKey]time.Time),
+	}
 }
 
 func (p *Publisher) PublishAfterBlock(ctx context.Context, committed *block.Block) error {
@@ -49,6 +56,10 @@ func (p *Publisher) PublishAfterBlock(ctx context.Context, committed *block.Bloc
 		return err
 	}
 	for _, item := range items {
+		key := item.Key()
+		if sentAt, ok := p.lastSent[key]; ok && time.Since(sentAt) < republishInterval {
+			continue
+		}
 		destination, resolveErr := p.resolver.GetLeader(item.DestinationShard)
 		if resolveErr != nil {
 			return fmt.Errorf("resolve fallback destination shard %d: %w", item.DestinationShard, resolveErr)
@@ -58,6 +69,7 @@ func (p *Publisher) PublishAfterBlock(ctx context.Context, committed *block.Bloc
 			return fmt.Errorf("wrap reserved fallback: %w", wrapErr)
 		}
 		p.conn.SendMsg2Dest(ctx, destination, wrapped)
+		p.lastSent[key] = time.Now()
 	}
 
 	return nil
@@ -99,6 +111,10 @@ func (p *Publisher) publishProgress(ctx context.Context, committed *block.Block)
 func (p *Publisher) publishCompletions(ctx context.Context, committed *block.Block) error {
 	for idx := range committed.TxList {
 		tx := &committed.TxList[idx]
+		if tx.FallbackCompleted != nil {
+			delete(p.lastSent, *tx.FallbackCompleted)
+			continue
+		}
 		if tx.ReservedFallback == nil {
 			continue
 		}

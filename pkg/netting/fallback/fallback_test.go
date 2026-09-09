@@ -90,6 +90,25 @@ func TestPublisherSendsPendingAndCompletionMessages(t *testing.T) {
 	require.Equal(t, message.FallbackTxMessageType, p2p.messages[3].GetMsgType())
 }
 
+func TestPublisherSuppressesImmediatePendingFallbackRepublish(t *testing.T) {
+	t.Parallel()
+
+	item := fallbackItem()
+	p2p := &fallbackP2P{}
+	publisher := fallback.NewPublisher(
+		true, 0, fallbackReader{items: []model.ReservedFallback{item}},
+		network.NewConnHandler(p2p), fallbackResolver{},
+	)
+	emptyBlock := &block.Block{}
+
+	require.NoError(t, publisher.PublishAfterBlock(context.Background(), emptyBlock))
+	require.Len(t, p2p.messages, 1)
+	require.Equal(t, message.FallbackTxMessageType, p2p.messages[0].GetMsgType())
+
+	require.NoError(t, publisher.PublishAfterBlock(context.Background(), emptyBlock))
+	require.Len(t, p2p.messages, 1)
+}
+
 type fallbackReader struct {
 	items []model.ReservedFallback
 }
