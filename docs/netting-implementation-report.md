@@ -68,13 +68,13 @@
 
 | 实验 | 自变量/方法 | 指标 | 论文中回答的问题 |
 | --- | --- | --- | --- |
-| 1 Baseline | static_relay、static_broker、netting_static_relay | throughput、latency、cross_messages_per_tx、Beacon/confirmation cost | 展示你的机制是否减少逐笔跨片消息和目标分片处理。 |
-| 2 Netting benefit | reverse_ratio = 0%,25%,50%,75%,100% | matched_value_ratio、fallback_value_ratio | 证明双向流量越强，净额化收益越高。 |
-| 3 BatchSize | 10,20,50,100,200 | throughput、beacon_bytes_per_intent、capital_lock_s、avg_latency_s | 展示批量摊销收益与等待/锁资成本的权衡。 |
-| 4 MaxWindowDuration | 100ms,500ms,1s,2s,5s | matched_value_ratio、avg_latency_s | 展示撮合窗口越长，撮合率和端到端延迟之间的 trade-off。 |
-| 5 Matcher ablation | exact_only、best_fit、full | matched/fallback ratio、split_allocations | 证明三阶段策略相对于简单 exact-only 的价值。 |
-| 6 Scale | shard_num = 4,8,16; node_num = 4 | throughput、beacon overhead、match_time_ms、proof_time_ms | 展示系统规模扩展时 Solver/Beacon/分片验证开销。 |
-| 7 Async/network latency | network_latency_ms sweep + heterogeneous shard block intervals | avg_latency_s、watermark_skew、fallback_value_ratio | 验证异步窗口规则在无全局高度条件下仍稳定。 |
+| 1 Baseline | static_relay、static_broker、netting_static_relay | matched_intent_ratio、throughput、latency、cross_messages_per_tx | 展示你的机制是否减少逐笔跨片消息和目标分片处理。 |
+| 2 Netting benefit | reverse_ratio = 0%,25%,50%,75%,100% | matched_intent_ratio、matched_value_ratio、fallback_value_ratio | 证明双向流量越强，净额化收益越高。 |
+| 3 BatchSize | 10,20,50,100,200 | matched_intent_ratio、throughput、beacon_bytes_per_intent、avg_latency_s | 展示批量摊销收益与等待/锁资成本的权衡。 |
+| 4 MaxWindowDuration | 100ms,500ms,1s,2s,5s | matched_intent_ratio、matched_value_ratio、avg_latency_s | 展示撮合窗口越长，撮合率和端到端延迟之间的 trade-off。 |
+| 5 Matcher ablation | exact_only、best_fit、full | matched_intent_ratio、matched_value_ratio、split_allocations | 证明三阶段策略相对于简单 exact-only 的价值。 |
+| 6 Scale | shard_num = 4,8,16; node_num = 4 | matched_intent_ratio、throughput、match_time_ms、proof_time_ms | 展示系统规模扩展时 Solver/Beacon/分片验证开销。 |
+| 7 Async/network latency | network_latency_ms sweep + heterogeneous shard block intervals | matched_intent_ratio、avg_latency_s、watermark_skew | 验证异步窗口规则在无全局高度条件下仍稳定。 |
 
 ## 5. 验证记录
 
@@ -84,7 +84,7 @@
 | Go tests | GOCACHE=$PWD/.exp/gocache go test -gcflags=all='-N -l' ./... | 通过，覆盖 chain、PBFT、netting、supervisor、network 等包。 |
 | Python syntax | PYTHONPYCACHEPREFIX=$PWD/.exp/pycache python3 -m py_compile scripts/netting_experiments/*.py | 通过。 |
 | Experiment smoke | scripts/netting_experiments/run_experiments.py --profile smoke | 第 5 组消融 smoke 已实际跑通；完整 1–7 组真实多进程 smoke 曾因 Codex 使用额度/外部进程限制中断，脚本已可由本地终端继续运行。 |
-| Plot guard | python3 scripts/netting_experiments/plot_experiments.py | 默认要求 summary.csv 包含 1–7 组，避免不完整数据生成论文图；调试可用 --allow-missing。 |
+| Partial plotting | python3 scripts/netting_experiments/plot_experiments.py | 按 summary.csv 中已有实验组生成对应 PNG；所有图都包含 matched_intent_ratio 撮合率指标。 |
 
 ## 6. 推荐代码阅读顺序
 

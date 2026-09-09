@@ -11,7 +11,7 @@ import struct
 import zlib
 from collections import defaultdict
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 PALETTE = {
@@ -33,47 +33,50 @@ def main() -> int:
     parser.add_argument(
         "--allow-missing",
         action="store_true",
-        help="allow debug plots when summary.csv does not contain all seven experiment groups",
+        help="deprecated; partial summaries are plotted automatically",
     )
     args = parser.parse_args()
 
     rows = read_rows(args.summary)
     if not rows:
         raise SystemExit(f"no rows found in {args.summary}")
-    require_experiments(rows, allow_missing=args.allow_missing)
     args.out.mkdir(parents=True, exist_ok=True)
 
-    plot_baseline(rows, args.out / "fig1_baseline_comparison.png")
-    plot_balance(rows, args.out / "fig2_netting_balance.png")
-    plot_batch_size(rows, args.out / "fig3_batch_size.png")
-    plot_window(rows, args.out / "fig4_window_duration.png")
-    plot_ablation(rows, args.out / "fig5_matcher_ablation.png")
-    plot_scale(rows, args.out / "fig6_scale.png")
-    plot_async(rows, args.out / "fig7_async_latency.png")
+    generated: list[Path] = []
+    skipped: list[str] = []
+    for experiment, filename, plot in plotters():
+        path = args.out / filename
+        if exp_rows(rows, experiment):
+            plot(rows, path)
+            generated.append(path)
+            continue
+        cleanup_stale_figure(path)
+        skipped.append(experiment)
+
+    if not generated:
+        raise SystemExit(f"no supported experiment groups found in {args.summary}")
     print(f"figures: {args.out}")
+    print("generated: " + ", ".join(path.name for path in generated))
+    if skipped:
+        print("skipped missing groups: " + ", ".join(skipped))
     return 0
 
 
-def require_experiments(rows: list[dict[str, str]], allow_missing: bool) -> None:
-    if allow_missing:
-        return
-    expected = {
-        "exp1_baseline",
-        "exp2_balance",
-        "exp3_batch_size",
-        "exp4_window_duration",
-        "exp5_matcher_ablation",
-        "exp6_scale",
-        "exp7_async_latency",
-    }
-    found = {row.get("experiment", "") for row in rows}
-    missing = sorted(expected - found)
-    if missing:
-        raise SystemExit(
-            "summary.csv is incomplete; missing experiment groups: "
-            + ", ".join(missing)
-            + ". Re-run run_experiments.py for all groups, or pass --allow-missing for debug plots."
-        )
+def plotters() -> list[tuple[str, str, Callable[[list[dict[str, str]], Path], None]]]:
+    return [
+        ("exp1_baseline", "fig1_baseline_comparison.png", plot_baseline),
+        ("exp2_balance", "fig2_netting_balance.png", plot_balance),
+        ("exp3_batch_size", "fig3_batch_size.png", plot_batch_size),
+        ("exp4_window_duration", "fig4_window_duration.png", plot_window),
+        ("exp5_matcher_ablation", "fig5_matcher_ablation.png", plot_ablation),
+        ("exp6_scale", "fig6_scale.png", plot_scale),
+        ("exp7_async_latency", "fig7_async_latency.png", plot_async),
+    ]
+
+
+def cleanup_stale_figure(path: Path) -> None:
+    if path.exists():
+        path.unlink()
 
 
 def read_rows(path: Path) -> list[dict[str, str]]:
@@ -120,12 +123,15 @@ def plot_baseline(rows: list[dict[str, str]], path: Path) -> None:
         ("throughput_tps", "Throughput (tx/s)", False),
         ("avg_latency_s", "Avg. latency (s)", False),
         ("cross_messages_per_tx", "Cross-shard msgs / tx", False),
+        ("matched_intent_ratio", "Matching rate", True),
     ]
-    chart = PNGFigure(980, 310)
+    chart = PNGFigure(980, 550)
     chart.title("Baseline comparison", 18, 22)
-    for idx, (metric, ylabel, _) in enumerate(panels):
+    for idx, (metric, ylabel, is_ratio) in enumerate(panels):
+        x = 55 + (idx % 2) * 470
+        y = 52 + (idx // 2) * 240
         vals = [mean(f(row, metric) for row in data if row.get("method") == method) for method in methods]
-        chart.bar_panel(30 + idx * 320, 52, 285, 220, labels, vals, ylabel, highlight=2)
+        chart.bar_panel(x, y, 390, 180, labels, vals, ylabel, highlight=2, y_max=1.0 if is_ratio else None)
     chart.save(path)
 
 
@@ -134,10 +140,11 @@ def plot_balance(rows: list[dict[str, str]], path: Path) -> None:
     chart = PNGFigure(640, 310)
     chart.title("Netting benefit under bidirectional traffic", 18, 22)
     series = {
+        "Matching rate": aggregate(data, "value", "matched_intent_ratio")["value"],
         "Matched value": aggregate(data, "value", "matched_value_ratio")["value"],
         "Fallback value": aggregate(data, "value", "fallback_value_ratio")["value"],
     }
-    chart.line_panel(55, 52, 540, 220, series, "Reverse traffic ratio", "Value ratio", y_max=1.0)
+    chart.line_panel(55, 52, 540, 220, series, "Reverse traffic ratio", "Ratio", y_max=1.0)
     chart.save(path)
 
 
@@ -146,36 +153,57 @@ def plot_batch_size(rows: list[dict[str, str]], path: Path) -> None:
     chart = PNGFigure(980, 550)
     chart.title("BatchSize sensitivity", 18, 22)
     panels = [
+        ("matched_intent_ratio", "Matching rate", True),
         ("throughput_tps", "Throughput (tx/s)"),
         ("beacon_bytes_per_intent", "Beacon bytes / intent"),
-        ("capital_lock_s", "Capital lock (s)"),
         ("avg_latency_s", "Avg. latency (s)"),
     ]
-    for idx, (metric, ylabel) in enumerate(panels):
+    for idx, panel in enumerate(panels):
+        metric, ylabel = panel[0], panel[1]
+        is_ratio = len(panel) > 2 and panel[2]
         x = 55 + (idx % 2) * 470
         y = 52 + (idx // 2) * 240
-        chart.line_panel(x, y, 390, 180, {"Netting": aggregate(data, "value", metric)["value"]}, "BatchSize", ylabel)
+        chart.line_panel(
+            x,
+            y,
+            390,
+            180,
+            {"Netting": aggregate(data, "value", metric)["value"]},
+            "BatchSize",
+            ylabel,
+            y_max=1.0 if is_ratio else None,
+        )
     chart.save(path)
 
 
 def plot_window(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp4_window_duration")
-    chart = PNGFigure(860, 310)
+    chart = PNGFigure(980, 310)
     chart.title("Window duration trade-off", 18, 22)
     chart.line_panel(
-        55,
+        50,
         52,
-        340,
+        260,
         220,
-        {"Matched value": aggregate(data, "value", "matched_value_ratio")["value"]},
+        {"Netting": aggregate(data, "value", "matched_intent_ratio")["value"]},
+        "MaxWindowDuration (ms)",
+        "Matching rate",
+        y_max=1.0,
+    )
+    chart.line_panel(
+        360,
+        52,
+        260,
+        220,
+        {"Netting": aggregate(data, "value", "matched_value_ratio")["value"]},
         "MaxWindowDuration (ms)",
         "Matched value ratio",
         y_max=1.0,
     )
     chart.line_panel(
-        480,
+        670,
         52,
-        320,
+        260,
         220,
         {"Latency": aggregate(data, "value", "avg_latency_s")["value"]},
         "MaxWindowDuration (ms)",
@@ -191,13 +219,25 @@ def plot_ablation(rows: list[dict[str, str]], path: Path) -> None:
     chart = PNGFigure(980, 310)
     chart.title("Matcher ablation", 18, 22)
     panels = [
+        ("matched_intent_ratio", "Matching rate", 2, True),
         ("matched_value_ratio", "Matched value ratio", 2),
-        ("fallback_value_ratio", "Fallback value ratio", 2),
         ("split_allocations", "Split allocations", 2),
     ]
-    for idx, (metric, ylabel, highlight) in enumerate(panels):
+    for idx, panel in enumerate(panels):
+        metric, ylabel, highlight = panel[0], panel[1], panel[2]
+        is_ratio = len(panel) > 3 and panel[3]
         vals = [mean(f(row, metric) for row in data if row.get("matcher_mode") == mode) for mode in modes]
-        chart.bar_panel(30 + idx * 320, 52, 285, 220, labels, vals, ylabel, highlight=highlight)
+        chart.bar_panel(
+            30 + idx * 320,
+            52,
+            285,
+            220,
+            labels,
+            vals,
+            ylabel,
+            highlight=highlight,
+            y_max=1.0 if is_ratio else None,
+        )
     chart.save(path)
 
 
@@ -206,15 +246,26 @@ def plot_scale(rows: list[dict[str, str]], path: Path) -> None:
     chart = PNGFigure(980, 550)
     chart.title("Scale sensitivity", 18, 22)
     panels = [
+        ("matched_intent_ratio", "Matching rate", True),
         ("throughput_tps", "Throughput (tx/s)"),
-        ("beacon_bytes_per_intent", "Beacon bytes / intent"),
         ("match_time_ms", "Solver match time (ms)"),
         ("proof_time_ms", "Proof verification time (ms)"),
     ]
-    for idx, (metric, ylabel) in enumerate(panels):
+    for idx, panel in enumerate(panels):
+        metric, ylabel = panel[0], panel[1]
+        is_ratio = len(panel) > 2 and panel[2]
         x = 55 + (idx % 2) * 470
         y = 52 + (idx // 2) * 240
-        chart.line_panel(x, y, 390, 180, {"Netting": aggregate(data, "shard_num", metric)["value"]}, "Shard count", ylabel)
+        chart.line_panel(
+            x,
+            y,
+            390,
+            180,
+            {"Netting": aggregate(data, "shard_num", metric)["value"]},
+            "Shard count",
+            ylabel,
+            y_max=1.0 if is_ratio else None,
+        )
     chart.save(path)
 
 
@@ -223,9 +274,9 @@ def plot_async(rows: list[dict[str, str]], path: Path) -> None:
     chart = PNGFigure(980, 310)
     chart.title("Asynchrony and network latency", 18, 22)
     panels = [
+        ("matched_intent_ratio", "Matching rate"),
         ("avg_latency_s", "Avg. latency (s)"),
         ("watermark_skew", "Vector-cut skew (blocks)"),
-        ("fallback_value_ratio", "Fallback value ratio"),
     ]
     for idx, (metric, ylabel) in enumerate(panels):
         chart.line_panel(
@@ -236,7 +287,7 @@ def plot_async(rows: list[dict[str, str]], path: Path) -> None:
             {"Netting": aggregate(data, "network_latency_ms", metric)["value"]},
             "Network latency (ms)",
             ylabel,
-            y_max=1.0 if "ratio" in metric else None,
+            y_max=1.0 if metric == "matched_intent_ratio" else None,
         )
     chart.save(path)
 
@@ -318,8 +369,9 @@ class PNGFigure:
         values: list[float],
         ylabel: str,
         highlight: int = -1,
+        y_max: float | None = None,
     ) -> None:
-        max_v = max(values + [1e-9]) * 1.18
+        max_v = y_max if y_max is not None else max(values + [1e-9]) * 1.18
         self.axes(x, y, w, h, ylabel, "", max_v)
         bar_w = w / max(1, len(values)) * 0.58
         for idx, value in enumerate(values):

@@ -59,17 +59,25 @@ The runner writes built executables under `.exp/netting-paper/bin/`. On Windows
 it automatically uses `.exe` names, while Unix-like systems keep extensionless
 binary names. It also builds for Go's native `GOHOSTOS/GOHOSTARCH` target, so
 stale `GOOS` or `GOARCH` environment variables do not accidentally produce a
-non-Windows executable named `*.exe`.
+non-Windows executable named `*.exe`. Windows builds use `-buildmode=exe` and
+clear `GOFLAGS` for the runner's build step, avoiding global Go flags that can
+produce a PE file that is not launchable as an application.
 
 Use `--tx-number` and `--tx-speed` to override the workload size and injection
 rate chosen by `--profile`.
 
-The plotting script requires all seven experiment groups by default. For
-debugging a partial run, use:
+The plotting script reads the experiment groups present in
+`.exp/netting-paper/summary.csv` and generates the corresponding figures. For
+example, if you run only `--experiments exp1,exp3,exp5`, it writes only figures
+1, 3, and 5. Known stale figure files for missing groups are removed from the
+output directory so the directory reflects the current summary.
 
 ```bash
-python3 scripts/netting_experiments/plot_experiments.py --allow-missing
+python3 scripts/netting_experiments/plot_experiments.py
 ```
+
+Every generated figure includes `matched_intent_ratio` as the matching-rate
+metric.
 
 ## Experiment groups
 
@@ -96,7 +104,7 @@ The runner writes:
 - `.exp/netting-paper/runs/<run_id>/`: config, IP table, workload, logs, and raw
   metric CSVs for that run.
 
-The plotting script writes PNG files under `figures/netting/`:
+The plotting script writes the available PNG files under `figures/netting/`:
 
 - `fig1_baseline_comparison.png`
 - `fig2_netting_balance.png`
