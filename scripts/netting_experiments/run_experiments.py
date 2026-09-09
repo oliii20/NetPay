@@ -388,6 +388,7 @@ def is_hex_address(value: str) -> bool:
 def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
     go_bin = resolve_go_binary(go_cmd)
     go_env = native_go_build_env(go_bin, repo)
+    build_flags = ["-buildmode=exe"] if os.name == "nt" else []
     bin_dir.mkdir(parents=True, exist_ok=True)
     clean_stale_binaries(bin_dir, ["consensusnode", "beaconnode", "solver", "supervisor"])
     commands = [
@@ -395,6 +396,7 @@ def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
         [
             go_bin,
             "build",
+            *build_flags,
             "-o",
             str(bin_dir / executable_name("consensusnode")),
             "./cmd/consensusnode",
@@ -402,14 +404,23 @@ def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
         [
             go_bin,
             "build",
+            *build_flags,
             "-o",
             str(bin_dir / executable_name("beaconnode")),
             "./cmd/beaconnode",
         ],
-        [go_bin, "build", "-o", str(bin_dir / executable_name("solver")), "./cmd/solver"],
         [
             go_bin,
             "build",
+            *build_flags,
+            "-o",
+            str(bin_dir / executable_name("solver")),
+            "./cmd/solver",
+        ],
+        [
+            go_bin,
+            "build",
+            *build_flags,
             "-o",
             str(bin_dir / executable_name("supervisor")),
             "./cmd/supervisor",
@@ -441,6 +452,9 @@ def native_go_build_env(go_bin: str, repo: Path) -> dict[str, str]:
 
     env["GOOS"] = values[0]
     env["GOARCH"] = values[1]
+    env.pop("GOFLAGS", None)
+    if env["GOOS"] == "windows" and env["GOARCH"] == "amd64":
+        env["GOAMD64"] = "v1"
     return env
 
 
@@ -494,10 +508,28 @@ def binary_diagnostic(path: Path) -> str:
     try:
         size = path.stat().st_size
         with path.open("rb") as fp:
-            magic = fp.read(4).hex(" ")
-        return f"binary size={size} bytes magic={magic}"
+            data = fp.read(256)
+        return f"binary size={size} bytes {pe_diagnostic(data)}"
     except OSError as err:
         return f"could not inspect binary: {err}"
+
+
+def pe_diagnostic(data: bytes) -> str:
+    magic = data[:4].hex(" ")
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return f"magic={magic}"
+
+    pe_offset = int.from_bytes(data[0x3C:0x40], "little")
+    if pe_offset + 6 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
+        return f"magic={magic} pe=missing"
+
+    machine = int.from_bytes(data[pe_offset + 4 : pe_offset + 6], "little")
+    machine_name = {
+        0x014C: "386",
+        0x8664: "amd64",
+        0xAA64: "arm64",
+    }.get(machine, f"unknown-0x{machine:04x}")
+    return f"magic={magic} pe_machine={machine_name}"
 
 
 def run_one(
