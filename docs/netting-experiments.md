@@ -6,10 +6,11 @@ This document describes the seven paper-facing experiments implemented in
 Default dataset:
 
 ```text
-/Users/ljn/Desktop/Newidea2026July/block-emulator-main-画预实验的图/selectedTxs_300K.csv
+data/selectedTxs_300K.csv
 ```
 
-The dataset is not copied into the repository. The runner derives per-run CSV
+The dataset is not copied into the repository. Put `selectedTxs_300K.csv` under
+`data/`, or pass a local path with `--dataset`. The runner derives per-run CSV
 workloads under `.exp/netting-paper/runs/<run_id>/workload.csv`.
 
 ## Running experiments
@@ -39,6 +40,12 @@ Run only selected groups:
 
 ```bash
 GOCACHE="$PWD/.exp/gocache" python3 scripts/netting_experiments/run_experiments.py --profile pilot --experiments exp1,exp3,exp5
+```
+
+Windows `cmd.exe` example:
+
+```bat
+set "GOCACHE=%CD%\.exp\gocache" && python scripts\netting_experiments\run_experiments.py --profile full --seeds 1 --experiments exp1 --timeout 1000 --progress-interval 20 --dataset "D:\path\to\selectedTxs_300K.csv"
 ```
 
 The plotting script requires all seven experiment groups by default. For

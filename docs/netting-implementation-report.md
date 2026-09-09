@@ -3,7 +3,7 @@
 支付意图、资金预留、批量撮合、Beacon MatchRoot 与分片内清算实现说明
 
 生成日期：2026-09-07  
-仓库：`/Users/ljn/Desktop/Newidea2026July/block-emulator-x-netting-dev`  
+仓库：当前 BlockEmulator-X Netting checkout  
 分支：`feat/block-netting`；基线提交：`a5635e7`；当前提交：`9f9751a`
 
 ## 1. 实现总览

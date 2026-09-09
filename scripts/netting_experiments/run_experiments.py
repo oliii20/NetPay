@@ -26,9 +26,8 @@ from pathlib import Path
 from typing import Iterable
 
 
-DEFAULT_DATASET = Path(
-    "/Users/ljn/Desktop/Newidea2026July/block-emulator-main-画预实验的图/selectedTxs_300K.csv"
-)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DATASET = Path("data/selectedTxs_300K.csv")
 BEACON_SHARD_ID = 2147483646
 SOLVER_SHARD_ID = 2147483645
 SUPERVISOR_SHARD_ID = 2147483647
@@ -89,32 +88,34 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    repo = Path.cwd()
+    repo = REPO_ROOT
+    out_dir = repo_path(args.out, repo)
+    dataset_path = repo_path(args.dataset, repo)
     selected = selected_experiments(args.experiments)
     seeds = parse_seeds(args.seeds) or default_seeds(args.profile)
     specs = build_specs(args.profile, selected, seeds)
-    args.out.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.dry_run:
         for spec in specs:
             print(spec.run_id)
         return 0
 
-    dataset_rows = load_dataset(args.dataset)
+    dataset_rows = load_dataset(dataset_path)
     if not args.skip_build:
-        build_binaries(repo, args.out / "bin")
+        build_binaries(repo, out_dir / "bin")
 
-    summary_path = args.out / "summary.csv"
-    runs_path = args.out / "runs.jsonl"
+    summary_path = out_dir / "summary.csv"
+    runs_path = out_dir / "runs.jsonl"
     write_summary_header(summary_path)
     with runs_path.open("a", encoding="utf-8") as runs_fp:
         for idx, spec in enumerate(specs):
-            run_dir = args.out / "runs" / spec.run_id
+            run_dir = out_dir / "runs" / spec.run_id
             base_port = 24000 + (idx % 40) * 900
             print(f"[{idx + 1}/{len(specs)}] {spec.run_id}", flush=True)
             result = run_one(
                 repo,
-                args.out / "bin",
+                out_dir / "bin",
                 run_dir,
                 spec,
                 dataset_rows,
@@ -129,6 +130,12 @@ def main() -> int:
     print(f"summary: {summary_path}")
     print(f"runs: {runs_path}")
     return 0
+
+
+def repo_path(path: Path, repo: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return repo / path
 
 
 def selected_experiments(raw: str) -> set[str]:
@@ -317,7 +324,11 @@ def build_specs(profile: str, selected: set[str], seeds: list[int]) -> list[RunS
 
 def load_dataset(path: Path) -> list[list[str]]:
     if not path.exists():
-        raise SystemExit(f"dataset not found: {path}")
+        raise SystemExit(
+            f"dataset not found: {path}\n"
+            "Place selectedTxs_300K.csv under data/selectedTxs_300K.csv, "
+            "or pass --dataset with your local dataset path."
+        )
     rows: list[list[str]] = []
     with path.open(newline="", encoding="utf-8") as fp:
         reader = csv.reader(fp)
