@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -77,6 +77,8 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--out", type=Path, default=Path(".exp/netting-paper"))
     parser.add_argument("--seeds", default="", help="override seeds, e.g. 1,2,3")
+    parser.add_argument("--tx-number", type=positive_int, help="override profile tx_number")
+    parser.add_argument("--tx-speed", type=positive_int, help="override profile tx_injection_speed")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout", type=int, default=500)
@@ -93,7 +95,7 @@ def main() -> int:
     dataset_path = repo_path(args.dataset, repo)
     selected = selected_experiments(args.experiments)
     seeds = parse_seeds(args.seeds) or default_seeds(args.profile)
-    specs = build_specs(args.profile, selected, seeds)
+    specs = build_specs(args.profile, selected, seeds, args.tx_number, args.tx_speed)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.dry_run:
@@ -138,6 +140,13 @@ def repo_path(path: Path, repo: Path) -> Path:
     return repo / path
 
 
+def positive_int(raw: str) -> int:
+    value = int(raw)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
 def selected_experiments(raw: str) -> set[str]:
     if raw == "all":
         return {f"exp{i}" for i in range(1, 8)}
@@ -161,7 +170,13 @@ def default_seeds(profile: str) -> list[int]:
     return [1]
 
 
-def build_specs(profile: str, selected: set[str], seeds: list[int]) -> list[RunSpec]:
+def build_specs(
+    profile: str,
+    selected: set[str],
+    seeds: list[int],
+    tx_number_override: Optional[int] = None,
+    tx_speed_override: Optional[int] = None,
+) -> list[RunSpec]:
     if profile == "smoke":
         tx_number, tx_speed = 32, 160
         balance_points = [0.0, 1.0]
@@ -183,6 +198,12 @@ def build_specs(profile: str, selected: set[str], seeds: list[int]) -> list[RunS
         window_points = [100, 500, 1000, 2000, 5000]
         scale_points = [4, 8, 16]
         latency_points = [0, 25, 50, 100, 200]
+
+    user_tx_number = tx_number_override is not None
+    if tx_number_override is not None:
+        tx_number = tx_number_override
+    if tx_speed_override is not None:
+        tx_speed = tx_speed_override
 
     specs: list[RunSpec] = []
     for seed in seeds:
@@ -295,7 +316,7 @@ def build_specs(profile: str, selected: set[str], seeds: list[int]) -> list[RunS
                         "shard_num",
                         str(shard_num),
                         workload="balance",
-                        tx_number=max(tx_number, shard_num * 24),
+                        tx_number=tx_number if user_tx_number else max(tx_number, shard_num * 24),
                         tx_speed=tx_speed,
                         shard_num=shard_num,
                         balance_ratio=1.0,
@@ -367,13 +388,37 @@ def build_binaries(repo: Path, bin_dir: Path) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     commands = [
         ["go", "mod", "download"],
-        ["go", "build", "-o", str(bin_dir / "consensusnode"), "./cmd/consensusnode"],
-        ["go", "build", "-o", str(bin_dir / "beaconnode"), "./cmd/beaconnode"],
-        ["go", "build", "-o", str(bin_dir / "solver"), "./cmd/solver"],
-        ["go", "build", "-o", str(bin_dir / "supervisor"), "./cmd/supervisor"],
+        [
+            "go",
+            "build",
+            "-o",
+            str(bin_dir / executable_name("consensusnode")),
+            "./cmd/consensusnode",
+        ],
+        [
+            "go",
+            "build",
+            "-o",
+            str(bin_dir / executable_name("beaconnode")),
+            "./cmd/beaconnode",
+        ],
+        ["go", "build", "-o", str(bin_dir / executable_name("solver")), "./cmd/solver"],
+        [
+            "go",
+            "build",
+            "-o",
+            str(bin_dir / executable_name("supervisor")),
+            "./cmd/supervisor",
+        ],
     ]
     for cmd in commands:
         subprocess.run(cmd, cwd=repo, check=True)
+
+
+def executable_name(name: str) -> str:
+    if os.name == "nt":
+        return f"{name}.exe"
+    return name
 
 
 def run_one(
@@ -502,7 +547,7 @@ def launch_cluster(
         fp = (log_dir / f"{name}.log").open("wb")
         proc = subprocess.Popen(
             [
-                str(bin_dir / binary),
+                str(bin_dir / executable_name(binary)),
                 f"-config={config_path}",
                 f"-ip_table={ip_table_path}",
                 f"-shard_id={shard_id}",

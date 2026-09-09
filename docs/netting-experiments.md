@@ -45,8 +45,15 @@ GOCACHE="$PWD/.exp/gocache" python3 scripts/netting_experiments/run_experiments.
 Windows `cmd.exe` example:
 
 ```bat
-set "GOCACHE=%CD%\.exp\gocache" && python scripts\netting_experiments\run_experiments.py --profile full --seeds 1 --experiments exp1 --timeout 1000 --progress-interval 20 --dataset "D:\path\to\selectedTxs_300K.csv"
+set "GOCACHE=%CD%\.exp\gocache" && python scripts\netting_experiments\run_experiments.py --profile full --seeds 1 --experiments exp1 --tx-number 50000 --tx-speed 2000 --timeout 1000 --progress-interval 20 --dataset "D:\path\to\selectedTxs_300K.csv"
 ```
+
+The runner writes built executables under `.exp/netting-paper/bin/`. On Windows
+it automatically uses `.exe` names, while Unix-like systems keep extensionless
+binary names.
+
+Use `--tx-number` and `--tx-speed` to override the workload size and injection
+rate chosen by `--profile`.
 
 The plotting script requires all seven experiment groups by default. For
 debugging a partial run, use:
