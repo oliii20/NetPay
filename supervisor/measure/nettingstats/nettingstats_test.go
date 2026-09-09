@@ -79,6 +79,30 @@ func TestCollectorMergesOutOfOrderEventsAndWritesStableCSVs(t *testing.T) {
 	require.Equal(t, "true", csvValue(intentRows, "UsedFallback"))
 }
 
+func TestCollectorFlushWritesPartialSnapshotsBeforeClose(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	collector := nettingstats.New(dir)
+	batchID := merkle.Hash{3}
+	update, err := message.WrapMsg(&message.NettingBatchMetricMsg{NodeID: 0, Metric: model.NettingBatchMetric{
+		BatchID: batchID, WindowID: 7, CloseReason: "batch_size", IntentCount: 2,
+		OriginalValue: "20", MatchedValue: "10", FallbackValue: "10",
+	}})
+	require.NoError(t, err)
+	require.NoError(t, collector.UpdateMeasureRecord(update))
+
+	require.NoError(t, collector.Flush())
+	batchRows := readCSV(t, filepath.Join(dir, nettingstats.BatchMetricsFile))
+	require.Len(t, batchRows, 2)
+	require.Equal(t, "7", csvValue(batchRows, "WindowID"))
+	require.Equal(t, "0.500000", csvValue(batchRows, "MatchedValueRatio"))
+
+	intentRows := readCSV(t, filepath.Join(dir, nettingstats.IntentMetricsFile))
+	require.Len(t, intentRows, 1)
+	require.NoError(t, collector.OutputResultAndClose())
+}
+
 func readCSV(t *testing.T, path string) [][]string {
 	t.Helper()
 	file, err := os.Open(path)

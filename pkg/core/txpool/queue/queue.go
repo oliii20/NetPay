@@ -82,44 +82,113 @@ func packTxsByGivenNum(
 	q []transaction.Transaction,
 	n int,
 ) ([]transaction.Transaction, []transaction.Transaction, error) {
-	length := len(q)
-	if length > n {
-		length = n
+	if n <= 0 || len(q) == 0 {
+		return nil, q, nil
 	}
 
-	ret := make([]transaction.Transaction, length)
-	copy(ret, q[:length]) // deep copy
-	q = q[length:]
+	selected := make([]bool, len(q))
+	packed := make([]transaction.Transaction, 0, min(n, len(q)))
+	for idx := range q {
+		if len(packed) == n {
+			break
+		}
+		if !isPriorityTx(q[idx]) {
+			continue
+		}
+		packed = append(packed, q[idx])
+		selected[idx] = true
+	}
+	for idx := range q {
+		if len(packed) == n {
+			break
+		}
+		if selected[idx] {
+			continue
+		}
+		packed = append(packed, q[idx])
+		selected[idx] = true
+	}
 
-	return ret, q, nil
+	return packed, remainingTxs(q, selected), nil
 }
 
 func packTxsByGivenBytes(
 	q []transaction.Transaction,
 	n int,
 ) ([]transaction.Transaction, []transaction.Transaction, error) {
-	endIdx := 0
+	if n <= 0 || len(q) == 0 {
+		return nil, q, nil
+	}
 
-	for i, tx := range q {
-		b, err := tx.Encode()
+	selected := make([]bool, len(q))
+	packed := make([]transaction.Transaction, 0)
+	remainingBytes := n
+	for idx := range q {
+		if !isPriorityTx(q[idx]) {
+			continue
+		}
+		nextRemaining, ok, err := packIfFits(q[idx], remainingBytes)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		size := len(b)
-		if size < n {
-			break
+		if !ok {
+			continue
 		}
-
-		n -= size
-		endIdx = i + 1
+		packed = append(packed, q[idx])
+		selected[idx] = true
+		remainingBytes = nextRemaining
+	}
+	for idx := range q {
+		if selected[idx] {
+			continue
+		}
+		nextRemaining, ok, err := packIfFits(q[idx], remainingBytes)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			continue
+		}
+		packed = append(packed, q[idx])
+		selected[idx] = true
+		remainingBytes = nextRemaining
 	}
 
-	ret := make([]transaction.Transaction, endIdx)
-	copy(ret, q[:endIdx]) // deep copy
-	q = q[endIdx:]
+	return packed, remainingTxs(q, selected), nil
+}
 
-	return ret, q, nil
+func packIfFits(tx transaction.Transaction, remainingBytes int) (int, bool, error) {
+	b, err := tx.Encode()
+	if err != nil {
+		return remainingBytes, false, err
+	}
+	size := len(b)
+	if size > remainingBytes {
+		return remainingBytes, false, nil
+	}
+
+	return remainingBytes - size, true, nil
+}
+
+func remainingTxs(q []transaction.Transaction, selected []bool) []transaction.Transaction {
+	remaining := make([]transaction.Transaction, 0, len(q))
+	for idx := range q {
+		if selected[idx] {
+			continue
+		}
+		remaining = append(remaining, q[idx])
+	}
+
+	return remaining
+}
+
+func isPriorityTx(tx transaction.Transaction) bool {
+	switch tx.TxType() {
+	case transaction.SettlementTxType, transaction.ReservedFallbackTxType, transaction.FallbackCompletedTxType:
+		return true
+	default:
+		return false
+	}
 }
 
 func getCurSizeOfNum(txs []transaction.Transaction) (int, error) {

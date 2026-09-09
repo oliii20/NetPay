@@ -7,11 +7,13 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
@@ -23,8 +25,9 @@ import (
 )
 
 const (
-	BatchMetricsFile  = "netting_batch_metrics.csv"
-	IntentMetricsFile = "netting_intent_metrics.csv"
+	BatchMetricsFile     = "netting_batch_metrics.csv"
+	IntentMetricsFile    = "netting_intent_metrics.csv"
+	partialFlushInterval = 5 * time.Second
 )
 
 var batchHeaders = []string{
@@ -66,20 +69,32 @@ type intentRecord struct {
 
 type Collector struct {
 	outputDir string
+	mu        sync.Mutex
+	closeOnce sync.Once
+	stopFlush chan struct{}
+	flushDone chan struct{}
 	batches   map[merkle.Hash]*batchRecord
 	intents   map[intent.ID]*intentRecord
 	seen      map[string]struct{}
 }
 
 func New(outputDir string) *Collector {
-	return &Collector{
+	c := &Collector{
 		outputDir: outputDir,
+		stopFlush: make(chan struct{}),
+		flushDone: make(chan struct{}),
 		batches:   make(map[merkle.Hash]*batchRecord), intents: make(map[intent.ID]*intentRecord),
 		seen: make(map[string]struct{}),
 	}
+	go c.flushPeriodically(partialFlushInterval)
+
+	return c
 }
 
 func (c *Collector) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	switch wrapped.GetMsgType() {
 	case message.NettingBatchMetricMessageType:
 		var msg message.NettingBatchMetricMsg
@@ -109,10 +124,42 @@ func (c *Collector) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 }
 
 func (c *Collector) OutputResultAndClose() error {
-	if err := csvwrite.WriteAllToCSV(filepath.Join(c.outputDir, BatchMetricsFile), batchHeaders, c.batchRows()); err != nil {
+	c.closeOnce.Do(func() {
+		close(c.stopFlush)
+		<-c.flushDone
+	})
+
+	return c.Flush()
+}
+
+func (c *Collector) Flush() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.writeSnapshotLocked()
+}
+
+func (c *Collector) flushPeriodically(interval time.Duration) {
+	defer close(c.flushDone)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if err := c.Flush(); err != nil {
+				slog.Error("failed to flush partial netting metrics", "err", err)
+			}
+		case <-c.stopFlush:
+			return
+		}
+	}
+}
+
+func (c *Collector) writeSnapshotLocked() error {
+	if err := csvwrite.WriteAllToCSVReplace(filepath.Join(c.outputDir, BatchMetricsFile), batchHeaders, c.batchRows()); err != nil {
 		return fmt.Errorf("write netting batch metrics: %w", err)
 	}
-	if err := csvwrite.WriteAllToCSV(filepath.Join(c.outputDir, IntentMetricsFile), intentHeaders, c.intentRows()); err != nil {
+	if err := csvwrite.WriteAllToCSVReplace(filepath.Join(c.outputDir, IntentMetricsFile), intentHeaders, c.intentRows()); err != nil {
 		return fmt.Errorf("write netting intent metrics: %w", err)
 	}
 

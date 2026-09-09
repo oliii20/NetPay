@@ -1,6 +1,7 @@
 package csvwrite
 
 import (
+	"encoding/csv"
 	"os"
 	"testing"
 
@@ -27,6 +28,20 @@ func TestWriteAllToCSV(t *testing.T) {
 
 	err := WriteAllToCSV(testCSVAllPath, testHeader, testLines)
 	require.NoError(t, err)
+}
+
+func TestWriteAllToCSVReplaceOverwritesExistingFile(t *testing.T) {
+	path := t.TempDir() + "/replace.csv"
+
+	require.NoError(t, WriteAllToCSV(path, testHeader, testLines))
+	require.NoError(t, WriteAllToCSVReplace(path, testHeader, [][]string{{"7", "8", "9"}}))
+
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, file.Close()) }()
+	rows, err := csv.NewReader(file).ReadAll()
+	require.NoError(t, err)
+	require.Equal(t, [][]string{testHeader, []string{"7", "8", "9"}}, rows)
 }
 
 func TestCSVSeqWriter(t *testing.T) {
