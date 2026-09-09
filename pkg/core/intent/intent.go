@@ -116,7 +116,7 @@ func (p PaymentIntent) CanonicalBytes() ([]byte, error) {
 	}
 
 	amount := p.Amount.Bytes()
-	if len(amount) > math.MaxUint32 {
+	if uint64(len(amount)) > uint64(math.MaxUint32) {
 		return nil, fmt.Errorf("%w: encoded amount is too large", ErrInvalidAmount)
 	}
 
