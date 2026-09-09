@@ -57,7 +57,9 @@ set "GOCACHE=%CD%\.exp\gocache" && python scripts\netting_experiments\run_experi
 
 The runner writes built executables under `.exp/netting-paper/bin/`. On Windows
 it automatically uses `.exe` names, while Unix-like systems keep extensionless
-binary names.
+binary names. It also builds for Go's native `GOHOSTOS/GOHOSTARCH` target, so
+stale `GOOS` or `GOARCH` environment variables do not accidentally produce a
+non-Windows executable named `*.exe`.
 
 Use `--tx-number` and `--tx-speed` to override the workload size and injection
 rate chosen by `--profile`.

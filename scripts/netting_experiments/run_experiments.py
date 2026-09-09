@@ -387,6 +387,7 @@ def is_hex_address(value: str) -> bool:
 
 def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
     go_bin = resolve_go_binary(go_cmd)
+    go_env = native_go_build_env(go_bin, repo)
     bin_dir.mkdir(parents=True, exist_ok=True)
     clean_stale_binaries(bin_dir, ["consensusnode", "beaconnode", "solver", "supervisor"])
     commands = [
@@ -416,9 +417,31 @@ def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
     ]
     for cmd in commands:
         try:
-            subprocess.run(cmd, cwd=repo, check=True)
+            subprocess.run(cmd, cwd=repo, check=True, env=go_env)
         except FileNotFoundError as err:
             raise SystemExit(f"failed to run {cmd[0]!r}: {err}") from err
+
+
+def native_go_build_env(go_bin: str, repo: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    try:
+        result = subprocess.run(
+            [go_bin, "env", "GOHOSTOS", "GOHOSTARCH"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as err:
+        raise SystemExit(f"failed to detect native Go target with {go_bin!r}: {err}") from err
+
+    values = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if len(values) != 2:
+        raise SystemExit(f"failed to detect native Go target with {go_bin!r}: {result.stdout!r}")
+
+    env["GOOS"] = values[0]
+    env["GOARCH"] = values[1]
+    return env
 
 
 def clean_stale_binaries(bin_dir: Path, names: Iterable[str]) -> None:
@@ -465,6 +488,16 @@ def executable_name(name: str) -> str:
     if os.name == "nt":
         return f"{name}.exe"
     return name
+
+
+def binary_diagnostic(path: Path) -> str:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fp:
+            magic = fp.read(4).hex(" ")
+        return f"binary size={size} bytes magic={magic}"
+    except OSError as err:
+        return f"could not inspect binary: {err}"
 
 
 def run_one(
@@ -597,18 +630,26 @@ def launch_cluster(
                 "Run without --skip-build so the runner builds platform-specific binaries."
             )
         fp = (log_dir / f"{name}.log").open("wb")
-        proc = subprocess.Popen(
-            [
-                str(binary_path),
-                f"-config={config_path}",
-                f"-ip_table={ip_table_path}",
-                f"-shard_id={shard_id}",
-                f"-node_id={node_id}",
-            ],
-            cwd=repo,
-            stdout=fp,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            proc = subprocess.Popen(
+                [
+                    str(binary_path),
+                    f"-config={config_path}",
+                    f"-ip_table={ip_table_path}",
+                    f"-shard_id={shard_id}",
+                    f"-node_id={node_id}",
+                ],
+                cwd=repo,
+                stdout=fp,
+                stderr=subprocess.STDOUT,
+            )
+        except OSError as err:
+            fp.close()
+            raise SystemExit(
+                f"failed to launch binary: {binary_path}\n"
+                f"{binary_diagnostic(binary_path)}\n"
+                f"{err}"
+            ) from err
         processes.append(proc)
 
     for shard_id in range(spec.shard_num):
