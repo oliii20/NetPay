@@ -73,15 +73,15 @@ The runner writes:
 - `.exp/netting-paper/runs/<run_id>/`: config, IP table, workload, logs, and raw
   metric CSVs for that run.
 
-The plotting script writes vector SVG files under `figures/netting/`:
+The plotting script writes PNG files under `figures/netting/`:
 
-- `fig1_baseline_comparison.svg`
-- `fig2_netting_balance.svg`
-- `fig3_batch_size.svg`
-- `fig4_window_duration.svg`
-- `fig5_matcher_ablation.svg`
-- `fig6_scale.svg`
-- `fig7_async_latency.svg`
+- `fig1_baseline_comparison.png`
+- `fig2_netting_balance.png`
+- `fig3_batch_size.png`
+- `fig4_window_duration.png`
+- `fig5_matcher_ablation.png`
+- `fig6_scale.png`
+- `fig7_async_latency.png`
 
 ## Metric notes
 

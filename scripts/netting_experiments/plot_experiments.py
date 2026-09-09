@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create publication-style SVG figures from netting experiment summaries."""
+"""Create publication-style PNG figures from netting experiment summaries."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import argparse
 import csv
 import math
 import statistics
+import struct
+import zlib
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
@@ -41,13 +43,13 @@ def main() -> int:
     require_experiments(rows, allow_missing=args.allow_missing)
     args.out.mkdir(parents=True, exist_ok=True)
 
-    plot_baseline(rows, args.out / "fig1_baseline_comparison.svg")
-    plot_balance(rows, args.out / "fig2_netting_balance.svg")
-    plot_batch_size(rows, args.out / "fig3_batch_size.svg")
-    plot_window(rows, args.out / "fig4_window_duration.svg")
-    plot_ablation(rows, args.out / "fig5_matcher_ablation.svg")
-    plot_scale(rows, args.out / "fig6_scale.svg")
-    plot_async(rows, args.out / "fig7_async_latency.svg")
+    plot_baseline(rows, args.out / "fig1_baseline_comparison.png")
+    plot_balance(rows, args.out / "fig2_netting_balance.png")
+    plot_batch_size(rows, args.out / "fig3_batch_size.png")
+    plot_window(rows, args.out / "fig4_window_duration.png")
+    plot_ablation(rows, args.out / "fig5_matcher_ablation.png")
+    plot_scale(rows, args.out / "fig6_scale.png")
+    plot_async(rows, args.out / "fig7_async_latency.png")
     print(f"figures: {args.out}")
     return 0
 
@@ -119,7 +121,7 @@ def plot_baseline(rows: list[dict[str, str]], path: Path) -> None:
         ("avg_latency_s", "Avg. latency (s)", False),
         ("cross_messages_per_tx", "Cross-shard msgs / tx", False),
     ]
-    chart = SVGFigure(980, 310)
+    chart = PNGFigure(980, 310)
     chart.title("Baseline comparison", 18, 22)
     for idx, (metric, ylabel, _) in enumerate(panels):
         vals = [mean(f(row, metric) for row in data if row.get("method") == method) for method in methods]
@@ -129,7 +131,7 @@ def plot_baseline(rows: list[dict[str, str]], path: Path) -> None:
 
 def plot_balance(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp2_balance")
-    chart = SVGFigure(640, 310)
+    chart = PNGFigure(640, 310)
     chart.title("Netting benefit under bidirectional traffic", 18, 22)
     series = {
         "Matched value": aggregate(data, "value", "matched_value_ratio")["value"],
@@ -141,7 +143,7 @@ def plot_balance(rows: list[dict[str, str]], path: Path) -> None:
 
 def plot_batch_size(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp3_batch_size")
-    chart = SVGFigure(980, 550)
+    chart = PNGFigure(980, 550)
     chart.title("BatchSize sensitivity", 18, 22)
     panels = [
         ("throughput_tps", "Throughput (tx/s)"),
@@ -158,7 +160,7 @@ def plot_batch_size(rows: list[dict[str, str]], path: Path) -> None:
 
 def plot_window(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp4_window_duration")
-    chart = SVGFigure(860, 310)
+    chart = PNGFigure(860, 310)
     chart.title("Window duration trade-off", 18, 22)
     chart.line_panel(
         55,
@@ -186,7 +188,7 @@ def plot_ablation(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp5_matcher_ablation")
     modes = ["exact_only", "best_fit", "full"]
     labels = ["Exact", "+BestFit", "+Split"]
-    chart = SVGFigure(980, 310)
+    chart = PNGFigure(980, 310)
     chart.title("Matcher ablation", 18, 22)
     panels = [
         ("matched_value_ratio", "Matched value ratio", 2),
@@ -201,7 +203,7 @@ def plot_ablation(rows: list[dict[str, str]], path: Path) -> None:
 
 def plot_scale(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp6_scale")
-    chart = SVGFigure(980, 550)
+    chart = PNGFigure(980, 550)
     chart.title("Scale sensitivity", 18, 22)
     panels = [
         ("throughput_tps", "Throughput (tx/s)"),
@@ -218,7 +220,7 @@ def plot_scale(rows: list[dict[str, str]], path: Path) -> None:
 
 def plot_async(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp7_async_latency")
-    chart = SVGFigure(980, 310)
+    chart = PNGFigure(980, 310)
     chart.title("Asynchrony and network latency", 18, 22)
     panels = [
         ("avg_latency_s", "Avg. latency (s)"),
@@ -244,25 +246,67 @@ def mean(values: Iterable[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
-class SVGFigure:
+FONT_5X7 = {
+    " ": ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
+    "!": ("00100", "00100", "00100", "00100", "00100", "00000", "00100"),
+    "%": ("11001", "11010", "00100", "01000", "10110", "00110", "00000"),
+    "&": ("01100", "10010", "10100", "01000", "10101", "10010", "01101"),
+    "(": ("00010", "00100", "01000", "01000", "01000", "00100", "00010"),
+    ")": ("01000", "00100", "00010", "00010", "00010", "00100", "01000"),
+    "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
+    ",": ("00000", "00000", "00000", "00000", "00110", "00100", "01000"),
+    "-": ("00000", "00000", "00000", "11111", "00000", "00000", "00000"),
+    ".": ("00000", "00000", "00000", "00000", "00000", "00110", "00110"),
+    "/": ("00001", "00010", "00100", "01000", "10000", "00000", "00000"),
+    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
+    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
+    "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
+    "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
+    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
+    "5": ("11111", "10000", "10000", "11110", "00001", "00001", "11110"),
+    "6": ("01110", "10000", "10000", "11110", "10001", "10001", "01110"),
+    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
+    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
+    "9": ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
+    ":": ("00000", "00110", "00110", "00000", "00110", "00110", "00000"),
+    "?": ("01110", "10001", "00001", "00010", "00100", "00000", "00100"),
+    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    "C": ("01111", "10000", "10000", "10000", "10000", "10000", "01111"),
+    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
+    "G": ("01111", "10000", "10000", "10011", "10001", "10001", "01111"),
+    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "I": ("01110", "00100", "00100", "00100", "00100", "00100", "01110"),
+    "J": ("00111", "00010", "00010", "00010", "10010", "10010", "01100"),
+    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+    "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
+    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
+    "Q": ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
+    "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"),
+    "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
+    "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
+    "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
+}
+
+
+class PNGFigure:
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
-        self.parts: list[str] = [
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-            '<rect width="100%" height="100%" fill="white"/>',
-            "<style>",
-            "text{font-family:'Times New Roman',DejaVu Serif,serif;fill:#222}",
-            ".axis{stroke:#333;stroke-width:1}",
-            ".grid{stroke:#D0D0D0;stroke-width:0.7;opacity:0.45}",
-            ".tick{font-size:11px}",
-            ".label{font-size:13px;font-weight:600}",
-            ".legend{font-size:12px}",
-            "</style>",
-        ]
+        self.pixels = bytearray([255, 255, 255] * width * height)
 
     def title(self, text: str, x: int, y: int) -> None:
-        self.parts.append(f'<text x="{x}" y="{y}" font-size="18" font-weight="700">{escape(text)}</text>')
+        self.draw_text(text, x, y - 16, scale=2, color=PALETTE["text"])
 
     def bar_panel(
         self,
@@ -282,15 +326,9 @@ class SVGFigure:
             cx = x + (idx + 0.5) * w / len(values)
             bh = h * value / max_v
             color = PALETTE["ours"] if idx == highlight else [PALETTE["gray"], PALETTE["blue"], PALETTE["green"]][idx % 3]
-            self.parts.append(
-                f'<rect x="{cx - bar_w / 2:.1f}" y="{y + h - bh:.1f}" width="{bar_w:.1f}" height="{bh:.1f}" fill="{color}"/>'
-            )
-            self.parts.append(
-                f'<text class="tick" x="{cx:.1f}" y="{y + h + 18}" text-anchor="middle">{escape(labels[idx])}</text>'
-            )
-            self.parts.append(
-                f'<text class="tick" x="{cx:.1f}" y="{y + h - bh - 5:.1f}" text-anchor="middle">{fmt(value)}</text>'
-            )
+            self.rect(cx - bar_w / 2, y + h - bh, bar_w, bh, color)
+            self.draw_text(labels[idx], cx, y + h + 10, scale=1, anchor="center")
+            self.draw_text(fmt(value), cx, y + h - bh - 13, scale=1, anchor="center")
 
     def line_panel(
         self,
@@ -326,39 +364,173 @@ class SVGFigure:
                 if err > 0:
                     ey1 = y + h - (py - err) / max_v * h
                     ey2 = y + h - (py + err) / max_v * h
-                    self.parts.append(f'<line x1="{sx:.1f}" y1="{ey1:.1f}" x2="{sx:.1f}" y2="{ey2:.1f}" stroke="{color}" stroke-width="1"/>')
-                self.parts.append(f'<circle cx="{sx:.1f}" cy="{sy:.1f}" r="3.4" fill="{color}" stroke="white" stroke-width="0.8"/>')
+                    self.line(sx, ey1, sx, ey2, color, width=1)
+                self.circle(sx, sy, 4, color)
+                self.circle(sx, sy, 2, color)
             if len(coords) >= 2:
-                self.parts.append(f'<polyline points="{" ".join(coords)}" fill="none" stroke="{color}" stroke-width="2"/>')
+                for a, b in zip(values, values[1:]):
+                    ax = x + (a[0] - x_min) / (x_max - x_min) * w
+                    ay = y + h - a[1] / max_v * h
+                    bx = x + (b[0] - x_min) / (x_max - x_min) * w
+                    by = y + h - b[1] / max_v * h
+                    self.line(ax, ay, bx, by, color, width=2)
             lx = x + 8 + sidx * 120
             ly = y + 15
-            self.parts.append(f'<line x1="{lx}" y1="{ly}" x2="{lx + 18}" y2="{ly}" stroke="{color}" stroke-width="2"/>')
-            self.parts.append(f'<text class="legend" x="{lx + 23}" y="{ly + 4}">{escape(name)}</text>')
+            self.line(lx, ly, lx + 18, ly, color, width=2)
+            self.draw_text(name, lx + 23, ly - 4, scale=1)
         self.x_ticks(x, y, w, h, x_min, x_max)
 
     def axes(self, x: int, y: int, w: int, h: int, ylabel: str, xlabel: str, y_max: float) -> None:
         for i in range(5):
             gy = y + h - h * i / 4
-            self.parts.append(f'<line class="grid" x1="{x}" y1="{gy:.1f}" x2="{x + w}" y2="{gy:.1f}"/>')
+            self.line(x, gy, x + w, gy, PALETTE["light_gray"], width=1)
             value = y_max * i / 4
-            self.parts.append(f'<text class="tick" x="{x - 8}" y="{gy + 4:.1f}" text-anchor="end">{fmt(value)}</text>')
-        self.parts.append(f'<line class="axis" x1="{x}" y1="{y + h}" x2="{x + w}" y2="{y + h}"/>')
-        self.parts.append(f'<line class="axis" x1="{x}" y1="{y}" x2="{x}" y2="{y + h}"/>')
-        self.parts.append(f'<text class="label" x="{x + w / 2:.1f}" y="{y + h + 38}" text-anchor="middle">{escape(xlabel)}</text>')
-        self.parts.append(
-            f'<text class="label" transform="translate({x - 42},{y + h / 2:.1f}) rotate(-90)" text-anchor="middle">{escape(ylabel)}</text>'
-        )
+            self.draw_text(fmt(value), x - 8, gy - 4, scale=1, anchor="right")
+        self.line(x, y + h, x + w, y + h, "#333333", width=1)
+        self.line(x, y, x, y + h, "#333333", width=1)
+        self.draw_text(xlabel, x + w / 2, y + h + 30, scale=1, anchor="center")
+        self.draw_text(ylabel, x - 48, y + h / 2, scale=1, anchor="center", rotate_left=True)
 
     def x_ticks(self, x: int, y: int, w: int, h: int, x_min: float, x_max: float) -> None:
         for i in range(5):
             val = x_min + (x_max - x_min) * i / 4
             sx = x + w * i / 4
-            self.parts.append(f'<line class="grid" x1="{sx:.1f}" y1="{y}" x2="{sx:.1f}" y2="{y + h}"/>')
-            self.parts.append(f'<text class="tick" x="{sx:.1f}" y="{y + h + 18}" text-anchor="middle">{fmt(val)}</text>')
+            self.line(sx, y, sx, y + h, PALETTE["light_gray"], width=1)
+            self.draw_text(fmt(val), sx, y + h + 10, scale=1, anchor="center")
 
     def save(self, path: Path) -> None:
-        self.parts.append("</svg>")
-        path.write_text("\n".join(self.parts), encoding="utf-8")
+        path.write_bytes(encode_png(self.width, self.height, self.pixels))
+
+    def rect(self, x: float, y: float, w: float, h: float, color: str) -> None:
+        rgb = parse_hex(color)
+        x0 = max(0, int(round(x)))
+        y0 = max(0, int(round(y)))
+        x1 = min(self.width, int(round(x + w)))
+        y1 = min(self.height, int(round(y + h)))
+        for py in range(y0, y1):
+            start = (py * self.width + x0) * 3
+            end = (py * self.width + x1) * 3
+            self.pixels[start:end] = bytes(rgb) * (x1 - x0)
+
+    def line(self, x1: float, y1: float, x2: float, y2: float, color: str, width: int = 1) -> None:
+        rgb = parse_hex(color)
+        x1i, y1i = int(round(x1)), int(round(y1))
+        x2i, y2i = int(round(x2)), int(round(y2))
+        dx = abs(x2i - x1i)
+        dy = -abs(y2i - y1i)
+        sx = 1 if x1i < x2i else -1
+        sy = 1 if y1i < y2i else -1
+        err = dx + dy
+        x, y = x1i, y1i
+        radius = max(0, width // 2)
+        while True:
+            self.dot(x, y, radius, rgb)
+            if x == x2i and y == y2i:
+                break
+            e2 = 2 * err
+            if e2 >= dy:
+                err += dy
+                x += sx
+            if e2 <= dx:
+                err += dx
+                y += sy
+
+    def circle(self, cx: float, cy: float, radius: int, color: str) -> None:
+        rgb = parse_hex(color)
+        cxi, cyi = int(round(cx)), int(round(cy))
+        rr = radius * radius
+        for py in range(cyi - radius, cyi + radius + 1):
+            for px in range(cxi - radius, cxi + radius + 1):
+                if (px - cxi) ** 2 + (py - cyi) ** 2 <= rr:
+                    self.set_pixel(px, py, rgb)
+
+    def dot(self, x: int, y: int, radius: int, rgb: tuple[int, int, int]) -> None:
+        if radius <= 0:
+            self.set_pixel(x, y, rgb)
+            return
+        for py in range(y - radius, y + radius + 1):
+            for px in range(x - radius, x + radius + 1):
+                self.set_pixel(px, py, rgb)
+
+    def draw_text(
+        self,
+        text: str,
+        x: float,
+        y: float,
+        scale: int = 1,
+        color: str = PALETTE["text"],
+        anchor: str = "left",
+        rotate_left: bool = False,
+    ) -> None:
+        glyphs = raster_text(text, scale)
+        if rotate_left:
+            glyphs = rotate_counterclockwise(glyphs)
+        tw = len(glyphs[0]) if glyphs else 0
+        th = len(glyphs)
+        px = int(round(x))
+        py = int(round(y))
+        if anchor == "center":
+            px -= tw // 2
+            py -= th // 2
+        elif anchor == "right":
+            px -= tw
+        rgb = parse_hex(color)
+        for gy, row in enumerate(glyphs):
+            for gx, on in enumerate(row):
+                if on:
+                    self.set_pixel(px + gx, py + gy, rgb)
+
+    def set_pixel(self, x: int, y: int, rgb: tuple[int, int, int]) -> None:
+        if x < 0 or y < 0 or x >= self.width or y >= self.height:
+            return
+        offset = (y * self.width + x) * 3
+        self.pixels[offset : offset + 3] = bytes(rgb)
+
+
+def raster_text(text: str, scale: int) -> list[list[bool]]:
+    text = text.upper()
+    rows = 7 * scale
+    cols = max(1, sum((6 if ch != " " else 4) * scale for ch in text))
+    bitmap = [[False] * cols for _ in range(rows)]
+    cursor = 0
+    for char in text:
+        glyph = FONT_5X7.get(char, FONT_5X7["?"])
+        for gy, row in enumerate(glyph):
+            for gx, bit in enumerate(row):
+                if bit != "1":
+                    continue
+                for sy in range(scale):
+                    for sx in range(scale):
+                        bitmap[gy * scale + sy][cursor + gx * scale + sx] = True
+        cursor += (6 if char != " " else 4) * scale
+    return bitmap
+
+
+def rotate_counterclockwise(bitmap: list[list[bool]]) -> list[list[bool]]:
+    if not bitmap:
+        return bitmap
+    return [[row[x] for row in bitmap] for x in range(len(bitmap[0]) - 1, -1, -1)]
+
+
+def parse_hex(color: str) -> tuple[int, int, int]:
+    color = color.lstrip("#")
+    return int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16)
+
+
+def encode_png(width: int, height: int, pixels: bytearray) -> bytes:
+    raw = bytearray()
+    stride = width * 3
+    for y in range(height):
+        raw.append(0)
+        raw.extend(pixels[y * stride : (y + 1) * stride])
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    return b"\x89PNG\r\n\x1a\n" + chunk(
+        b"IHDR",
+        struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0),
+    ) + chunk(b"IDAT", zlib.compress(bytes(raw), level=9)) + chunk(b"IEND", b"")
 
 
 def fmt(value: float) -> str:
@@ -367,10 +539,6 @@ def fmt(value: float) -> str:
     if abs(value) >= 10:
         return f"{value:.1f}"
     return f"{value:.2f}"
-
-
-def escape(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 if __name__ == "__main__":

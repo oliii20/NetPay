@@ -37,7 +37,7 @@
 | 8 | Fallback 回退 | pkg/netting/fallback/*; pkg/chain/fallback.go | 未净额化金额释放为保留资金驱动的普通跨分片回退交易。 |
 | 9 | 指标系统 | pkg/netting/metrics/*; supervisor/measure/nettingstats/* | 记录 batch、Beacon、intent 生命周期、锁定时间、证明验证时间等论文指标。 |
 | 10 | 端到端运行脚本 | example_run_netting.sh; config.netting-e2e.yaml; ip_table_netting.json | 提供 4×4 本地复现实验入口。 |
-| 11 | 论文实验与画图 | scripts/netting_experiments/*; figures/netting/* | 实现 1–7 组实验、汇总 summary.csv，并输出科研风格 SVG 图。 |
+| 11 | 论文实验与画图 | scripts/netting_experiments/*; figures/netting/* | 实现 1–7 组实验、汇总 summary.csv，并输出科研风格 PNG 图。 |
 
 ## 3. 相对原始 BlockEmulator-X 的文件修改清单
 
@@ -61,7 +61,7 @@
 | 消息协议 | pkg/message/nettingmsg.go; pkg/message/message.go; pkg/message/pbftmsg.go | 新增 FinalizedBlockReceipt、BatchProposal、MatchRootFinalized、SettlementPackage、FallbackTx、FallbackCompleted、NettingMetric、NettingProgress 等消息和 PBFT proposal 包装。 | 让 netting 的链上/链下角色复用原有 WrappedMsg 与 PBFT 消息通道。 |
 | Supervisor workload | supervisor/committee/netting.go; supervisor/committee/staticrelay.go; supervisor/committee/staticbroker.go | Supervisor 将跨分片 NormalTx 转为 PaymentIntent，并通过 progress、fallback completion、execution metric 判断 netting 工作是否完成。 | 让实验可以用原始数据集驱动 netting 机制，并让 supervisor 正确终止。 |
 | 指标收集 | pkg/netting/metrics/publisher.go; supervisor/measure/router.go; supervisor/measure/nettingstats/nettingstats.go | 将 batch、Beacon、execution 三类指标路由到 netting collector；输出 netting_batch_metrics.csv 与 netting_intent_metrics.csv。 | 支撑论文实验中的吞吐、延迟、matched/fallback ratio、Beacon overhead、proof time、capital lock time 等指标。 |
-| 实验与画图 | scripts/netting_experiments/run_experiments.py; scripts/netting_experiments/plot_experiments.py; docs/netting-experiments.md; figures/netting/*.svg | 实现 baseline、净额化收益、BatchSize、MaxWindowDuration、算法消融、系统规模、异步/网络延迟 7 组实验，并生成论文风格矢量图。 | 让论文实验从运行、汇总到可视化形成可重复流水线。 |
+| 实验与画图 | scripts/netting_experiments/run_experiments.py; scripts/netting_experiments/plot_experiments.py; docs/netting-experiments.md; figures/netting/*.png | 实现 baseline、净额化收益、BatchSize、MaxWindowDuration、算法消融、系统规模、异步/网络延迟 7 组实验，并生成论文风格 PNG 图。 | 让论文实验从运行、汇总到可视化形成可重复流水线。 |
 | 测试文件 | pkg/netting/**/*_test.go; pkg/chain/*_test.go; supervisor/**/*_test.go; consensus/**/*_test.go; pkg/message/*_test.go | 为 matcher、window、batch、Beacon、Solver、settlement、fallback、metrics、supervisor 路由等模块增加单元/端到端测试。 | 降低大改动引入隐蔽状态机错误的风险。 |
 
 ## 4. 7 组论文实验代码与图
@@ -102,7 +102,7 @@
 | 9 | 看 settlement/fallback | pkg/netting/settlement/*.go; pkg/chain/settlement.go; pkg/netting/fallback/*.go; pkg/chain/fallback.go | 理解 confirmed MatchRoot 后各分片如何本地清算，剩余金额如何进入回退路径。 |
 | 10 | 看 PBFT 接线 | consensus/pbft/node.go; consensus/pbft/outsideop/netting.go; consensus/pbft/insideop/txblockop/*.go | 理解 netting 如何嵌入原始 BlockEmulator-X 的单线程 PBFT 出块流程。 |
 | 11 | 看 supervisor 和指标 | supervisor/committee/netting.go; supervisor/measure/router.go; supervisor/measure/nettingstats/nettingstats.go; pkg/netting/metrics/publisher.go | 理解实验输入如何从 CSV 转 intent，结果如何输出为论文指标。 |
-| 12 | 最后看实验脚本和图 | scripts/netting_experiments/run_experiments.py; scripts/netting_experiments/plot_experiments.py; figures/netting/*.svg | 理解 7 组实验如何配置、运行、汇总和画图。 |
+| 12 | 最后看实验脚本和图 | scripts/netting_experiments/run_experiments.py; scripts/netting_experiments/plot_experiments.py; figures/netting/*.png | 理解 7 组实验如何配置、运行、汇总和画图。 |
 | 13 | 用测试反向理解 | pkg/netting/matcher/matcher_test.go; pkg/netting/window/manager_test.go; pkg/chain/netting_e2e_test.go; consensus/pbft/insideop/beaconop/beaconop_test.go; supervisor/measure/nettingstats/nettingstats_test.go | 测试通常比实现更短，适合确认每个模块的输入输出语义。 |
 
 ## 7. 进一步写论文时可强调的实现边界
