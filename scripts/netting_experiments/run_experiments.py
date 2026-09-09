@@ -79,6 +79,7 @@ def main() -> int:
     parser.add_argument("--seeds", default="", help="override seeds, e.g. 1,2,3")
     parser.add_argument("--tx-number", type=positive_int, help="override profile tx_number")
     parser.add_argument("--tx-speed", type=positive_int, help="override profile tx_injection_speed")
+    parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout", type=int, default=500)
@@ -105,7 +106,7 @@ def main() -> int:
 
     dataset_rows = load_dataset(dataset_path)
     if not args.skip_build:
-        build_binaries(repo, out_dir / "bin")
+        build_binaries(repo, out_dir / "bin", args.go)
 
     summary_path = out_dir / "summary.csv"
     runs_path = out_dir / "runs.jsonl"
@@ -384,27 +385,29 @@ def is_hex_address(value: str) -> bool:
         return False
 
 
-def build_binaries(repo: Path, bin_dir: Path) -> None:
+def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
+    go_bin = resolve_go_binary(go_cmd)
     bin_dir.mkdir(parents=True, exist_ok=True)
+    clean_stale_binaries(bin_dir, ["consensusnode", "beaconnode", "solver", "supervisor"])
     commands = [
-        ["go", "mod", "download"],
+        [go_bin, "mod", "download"],
         [
-            "go",
+            go_bin,
             "build",
             "-o",
             str(bin_dir / executable_name("consensusnode")),
             "./cmd/consensusnode",
         ],
         [
-            "go",
+            go_bin,
             "build",
             "-o",
             str(bin_dir / executable_name("beaconnode")),
             "./cmd/beaconnode",
         ],
-        ["go", "build", "-o", str(bin_dir / executable_name("solver")), "./cmd/solver"],
+        [go_bin, "build", "-o", str(bin_dir / executable_name("solver")), "./cmd/solver"],
         [
-            "go",
+            go_bin,
             "build",
             "-o",
             str(bin_dir / executable_name("supervisor")),
@@ -412,7 +415,50 @@ def build_binaries(repo: Path, bin_dir: Path) -> None:
         ],
     ]
     for cmd in commands:
-        subprocess.run(cmd, cwd=repo, check=True)
+        try:
+            subprocess.run(cmd, cwd=repo, check=True)
+        except FileNotFoundError as err:
+            raise SystemExit(f"failed to run {cmd[0]!r}: {err}") from err
+
+
+def clean_stale_binaries(bin_dir: Path, names: Iterable[str]) -> None:
+    for name in names:
+        for suffix in ["", ".exe"]:
+            path = bin_dir / f"{name}{suffix}"
+            if path.exists():
+                path.unlink()
+
+
+def resolve_go_binary(go_cmd: str) -> str:
+    go_path = Path(go_cmd)
+    if go_path.is_absolute() or go_path.parent != Path("."):
+        if go_path.exists():
+            return str(go_path)
+        raise SystemExit(f"Go compiler not found: {go_cmd}")
+
+    found = shutil.which(go_cmd)
+    if found:
+        return found
+
+    if os.name == "nt":
+        for root in [
+            os.environ.get("GOROOT"),
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+        ]:
+            if not root:
+                continue
+            candidate = Path(root)
+            if candidate.name.lower() != "go":
+                candidate = candidate / "Go"
+            candidate = candidate / "bin" / "go.exe"
+            if candidate.exists():
+                return str(candidate)
+
+    raise SystemExit(
+        "Go compiler not found. Install Go and add its bin directory to PATH, "
+        "or pass --go with the full path to go.exe."
+    )
 
 
 def executable_name(name: str) -> str:
@@ -544,10 +590,16 @@ def launch_cluster(
     processes: list[subprocess.Popen[bytes]],
 ) -> None:
     def launch(name: str, binary: str, shard_id: int, node_id: int) -> None:
+        binary_path = bin_dir / executable_name(binary)
+        if not binary_path.exists():
+            raise SystemExit(
+                f"binary not found: {binary_path}\n"
+                "Run without --skip-build so the runner builds platform-specific binaries."
+            )
         fp = (log_dir / f"{name}.log").open("wb")
         proc = subprocess.Popen(
             [
-                str(bin_dir / executable_name(binary)),
+                str(binary_path),
                 f"-config={config_path}",
                 f"-ip_table={ip_table_path}",
                 f"-shard_id={shard_id}",
