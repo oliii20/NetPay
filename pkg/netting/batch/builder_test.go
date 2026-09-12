@@ -42,6 +42,12 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	require.Equal(t, int64(0), proposal.Header.Cuts[0].ShardID)
 	require.Len(t, proposal.Sidecar.IntentResults, 2)
 	require.Len(t, proposal.Sidecar.ShardSettlements, 2)
+	settlements := make(map[int64]model.ShardSettlement)
+	for _, settlement := range proposal.Sidecar.ShardSettlements {
+		settlements[settlement.ShardID] = settlement
+	}
+	require.Len(t, settlements[1].FallbackIncoming, 1)
+	require.Equal(t, int64(3), settlements[1].FallbackIncoming[0].FallbackAmount.Int64())
 	require.Equal(t, proposal.Header.BatchID, metric.BatchID)
 	require.Equal(t, uint64(3), metric.WindowID)
 	require.Equal(t, 2, metric.IntentCount)

@@ -314,6 +314,9 @@ func buildSettlements(
 		if result.MatchedAmount.Sign() > 0 {
 			incoming.Incoming = append(incoming.Incoming, cloneResult(result))
 		}
+		if result.FallbackAmount.Sign() > 0 {
+			incoming.FallbackIncoming = append(incoming.FallbackIncoming, cloneResult(result))
+		}
 	}
 
 	settlements := make([]model.ShardSettlement, 0, len(shardIDs))
@@ -322,6 +325,7 @@ func buildSettlements(
 		settlement := byShard[shardID]
 		sortResults(settlement.Outgoing)
 		sortResults(settlement.Incoming)
+		sortResults(settlement.FallbackIncoming)
 		chunkPayload, err := SettlementPayload(*settlement)
 		if err != nil {
 			return nil, nil, err
@@ -385,6 +389,14 @@ func SettlementPayload(settlement model.ShardSettlement) ([]byte, error) {
 	}
 	writeUint32(&out, uint32(len(settlement.Incoming)))
 	for _, result := range settlement.Incoming {
+		payload, err := ResultPayload(result)
+		if err != nil {
+			return nil, err
+		}
+		writeBytes(&out, payload)
+	}
+	writeUint32(&out, uint32(len(settlement.FallbackIncoming)))
+	for _, result := range settlement.FallbackIncoming {
 		payload, err := ResultPayload(result)
 		if err != nil {
 			return nil, err

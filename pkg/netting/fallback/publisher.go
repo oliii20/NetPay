@@ -91,6 +91,9 @@ func (p *Publisher) publishProgress(ctx context.Context, committed *block.Block)
 				completed = append(completed, result.IntentID)
 			}
 		}
+		for _, result := range tx.Settlement.Settlement.FallbackIncoming {
+			completed = append(completed, result.IntentID)
+		}
 	}
 	if len(completed) == 0 {
 		return nil

@@ -149,16 +149,12 @@ func (m *Manager) TryClose() *FrozenWindow {
 		return nil
 	}
 
-	sizeReady := len(m.pending) >= m.cfg.BatchSize
 	timeReady := !m.clock.Now().Before(m.openedAt.Add(m.cfg.MaxWindowDuration))
-	if !sizeReady && !timeReady {
+	if !timeReady {
 		return nil
 	}
 
 	reason := "max_window_duration"
-	if sizeReady {
-		reason = "batch_size"
-	}
 	window := m.seal(reason)
 	cloned := cloneFrozenWindow(window)
 
@@ -352,9 +348,6 @@ func sortedPendingIntents(pending map[intent.ID]intent.PaymentIntent) []intent.P
 func validateConfig(cfg Config) error {
 	if cfg.ShardCount <= 0 {
 		return fmt.Errorf("%w: shard count must be positive", ErrInvalidConfig)
-	}
-	if cfg.BatchSize <= 0 {
-		return fmt.Errorf("%w: batch size must be positive", ErrInvalidConfig)
 	}
 	if cfg.MaxWindowDuration <= 0 {
 		return fmt.Errorf("%w: max window duration must be positive", ErrInvalidConfig)

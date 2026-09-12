@@ -16,7 +16,6 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/beacon"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/fallback"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/receipt"
@@ -44,9 +43,10 @@ func TestNettingPipelineAcrossFourShards(t *testing.T) {
 			Height: header.Number, BlockHash: nettingE2EHash(hash),
 		}
 	}
+	clock := &nettingE2EClock{now: time.Unix(2, 0)}
 	manager, err := window.New(window.Config{
 		ShardCount: 4, BatchSize: len(payments), MaxWindowDuration: time.Minute,
-	}, nil, checkpoints)
+	}, clock, checkpoints)
 	require.NoError(t, err)
 
 	receipts := make([]model.FinalizedBlockReceipt, len(chains))
@@ -70,8 +70,11 @@ func TestNettingPipelineAcrossFourShards(t *testing.T) {
 			frozen = candidate
 		}
 	}
+	require.Nil(t, frozen)
+	clock.Advance(time.Minute)
+	frozen = manager.TryClose()
 	require.NotNil(t, frozen)
-	require.Equal(t, "batch_size", frozen.CloseReason)
+	require.Equal(t, "max_window_duration", frozen.CloseReason)
 	require.Len(t, frozen.Intents, len(payments))
 
 	proposal, err := (batch.Builder{}).Build(*frozen, merkle.Hash{})
@@ -98,24 +101,17 @@ func TestNettingPipelineAcrossFourShards(t *testing.T) {
 	}
 
 	var fallbackTotal big.Int
-	for _, chain := range chains {
-		pending, pendingErr := chain.GetPendingFallbacks(ctx)
-		require.NoError(t, pendingErr)
-		for _, item := range pending {
-			fallbackTotal.Add(&fallbackTotal, item.Amount)
-			destination := chains[item.DestinationShard]
-			nettingE2EAddBlock(t, destination, []transaction.Transaction{
-				*transaction.NewReservedFallbackTransaction(item, time.Unix(6, 0)),
-			})
-			nettingE2EAddBlock(t, chain, []transaction.Transaction{
-				*transaction.NewFallbackCompletedTransaction(item.Key(), time.Unix(7, 0)),
-			})
-			status, statusErr := chain.GetFallbackStatus(ctx, item.Key())
-			require.NoError(t, statusErr)
-			require.Equal(t, fallback.StatusCompleted, status)
+	for _, pack := range packages {
+		for _, result := range pack.Settlement.FallbackIncoming {
+			fallbackTotal.Add(&fallbackTotal, result.FallbackAmount)
 		}
 	}
 	require.Equal(t, big.NewInt(7), &fallbackTotal)
+	for _, chain := range chains {
+		pending, pendingErr := chain.GetPendingFallbacks(ctx)
+		require.NoError(t, pendingErr)
+		require.Empty(t, pending)
+	}
 
 	initial, ok := new(big.Int).SetString(account.NormalInitBalanceStr, 10)
 	require.True(t, ok)
@@ -135,6 +131,18 @@ func TestNettingPipelineAcrossFourShards(t *testing.T) {
 		require.Equal(t, registry.ReservationConsumed, reservation.Status)
 	}
 	require.Equal(t, expectedTotal, actualTotal)
+}
+
+type nettingE2EClock struct {
+	now time.Time
+}
+
+func (c *nettingE2EClock) Now() time.Time {
+	return c.now
+}
+
+func (c *nettingE2EClock) Advance(duration time.Duration) {
+	c.now = c.now.Add(duration)
 }
 
 func makeNettingE2EChains(t *testing.T, count int) []*Chain {

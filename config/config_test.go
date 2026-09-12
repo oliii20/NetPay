@@ -22,7 +22,7 @@ var expectedCfg = Config{
 	NettingCfg: NettingCfg{
 		Enabled:              true,
 		MetricsEnabled:       true,
-		BatchSize:            100,
+		BatchSize:            0,
 		MaxWindowDurationMS:  2000,
 		SolverTickIntervalMS: 100,
 		MatcherMode:          "full",
@@ -55,7 +55,7 @@ var expectedCfg = Config{
 		NettingCfg: NettingCfg{
 			Enabled:              true,
 			MetricsEnabled:       true,
-			BatchSize:            100,
+			BatchSize:            0,
 			MaxWindowDurationMS:  2000,
 			SolverTickIntervalMS: 100,
 			MatcherMode:          "full",
@@ -69,7 +69,7 @@ var expectedCfg = Config{
 		NettingCfg: NettingCfg{
 			Enabled:              true,
 			MetricsEnabled:       true,
-			BatchSize:            100,
+			BatchSize:            0,
 			MaxWindowDurationMS:  2000,
 			SolverTickIntervalMS: 100,
 			MatcherMode:          "full",

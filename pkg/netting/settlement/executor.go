@@ -18,7 +18,6 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/fallback"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/registry"
@@ -95,16 +94,16 @@ func (Executor) Execute(
 			return fmt.Errorf("consume outgoing reservation: %w", err)
 		}
 		if result.FallbackAmount.Sign() > 0 {
-			item := model.ReservedFallback{
-				IntentID: result.IntentID, BatchID: settlement.BatchID,
-				Sender: result.Intent.Sender, Recipient: result.Intent.Recipient,
-				SourceShard: result.Intent.SourceShard, DestinationShard: result.Intent.DestinationShard,
-				Amount: new(big.Int).Set(result.FallbackAmount), Proof: pack.Clone(),
-			}
-			if err := fallback.NewOutbox(stateDB).Create(item); err != nil {
+			fallbackAmount, fallbackOverflow := uint256.FromBig(result.FallbackAmount)
+			if fallbackOverflow {
 				stateDB.RevertToSnapshot(snapshot)
-				return fmt.Errorf("create reserved fallback: %w", err)
+				return ErrSettlementConservation
 			}
+			stateDB.SubBalance(
+				common.Address(registry.EscrowAccountAddress),
+				fallbackAmount,
+				tracing.BalanceChangeReason(balanceChangeSettlement),
+			)
 		}
 	}
 	for _, result := range settlement.Incoming {
@@ -129,6 +128,26 @@ func (Executor) Execute(
 		stateDB.AddBalance(
 			recipient,
 			matched,
+			tracing.BalanceChangeReason(balanceChangeSettlement),
+		)
+	}
+	for _, result := range settlement.FallbackIncoming {
+		fallbackAmount, overflow := uint256.FromBig(result.FallbackAmount)
+		if overflow {
+			stateDB.RevertToSnapshot(snapshot)
+			return ErrSettlementConservation
+		}
+		recipient := common.Address(result.Intent.Recipient)
+		if !stateDB.Exist(recipient) {
+			stateDB.SetBalance(
+				recipient,
+				settlementInitialBalance,
+				tracing.BalanceChangeReason(balanceChangeSettlement),
+			)
+		}
+		stateDB.AddBalance(
+			recipient,
+			fallbackAmount,
 			tracing.BalanceChangeReason(balanceChangeSettlement),
 		)
 	}
@@ -158,6 +177,7 @@ func validateInstructions(registryState *registry.Registry, shardID int64, settl
 	outgoing := make(map[balanceKey]*big.Int)
 	incoming := make(map[balanceKey]*big.Int)
 	seen := make(map[intent.ID]struct{}, len(settlement.Outgoing)+len(settlement.Incoming))
+	seenFallback := make(map[intent.ID]struct{}, len(settlement.FallbackIncoming))
 	for _, result := range settlement.Outgoing {
 		if err := result.Validate(); err != nil {
 			return err
@@ -194,6 +214,18 @@ func validateInstructions(registryState *registry.Registry, shardID int64, settl
 		addAmount(incoming, balanceKey{
 			Counterparty: result.Intent.SourceShard, AssetID: result.Intent.AssetID,
 		}, result.MatchedAmount)
+	}
+	for _, result := range settlement.FallbackIncoming {
+		if err := result.Validate(); err != nil {
+			return err
+		}
+		if result.Intent.DestinationShard != shardID || result.FallbackAmount.Sign() <= 0 {
+			return ErrWrongShard
+		}
+		if _, exists := seenFallback[result.IntentID]; exists {
+			return ErrDuplicateIntent
+		}
+		seenFallback[result.IntentID] = struct{}{}
 	}
 	if !equalBalances(outgoing, incoming) {
 		return fmt.Errorf(

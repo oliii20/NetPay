@@ -62,7 +62,7 @@ func New(
 	resolver nodetopo.NodeMapper,
 	store *batchstore.Store,
 ) (*Node, error) {
-	if cfg.ShardCount <= 0 || cfg.BatchSize <= 0 || cfg.MaxWindowDuration <= 0 || cfg.TickInterval <= 0 {
+	if cfg.ShardCount <= 0 || cfg.MaxWindowDuration <= 0 || cfg.TickInterval <= 0 {
 		return nil, ErrInvalidConfig
 	}
 	if conn == nil || resolver == nil || store == nil {

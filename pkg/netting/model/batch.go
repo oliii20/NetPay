@@ -23,13 +23,14 @@ type MatchRootBlockBody struct {
 // ShardSettlement is one atomic execution unit for a normal shard. BatchID is
 // routing metadata and is deliberately excluded from the Merkle payload.
 type ShardSettlement struct {
-	BatchID    merkle.Hash
-	WindowID   uint64
-	ShardID    int64
-	ChunkIndex uint32
-	ChunkCount uint32
-	Outgoing   []IntentResult
-	Incoming   []IntentResult
+	BatchID          merkle.Hash
+	WindowID         uint64
+	ShardID          int64
+	ChunkIndex       uint32
+	ChunkCount       uint32
+	Outgoing         []IntentResult
+	Incoming         []IntentResult
+	FallbackIncoming []IntentResult
 }
 
 type ChunkCommitment struct {
@@ -92,6 +93,7 @@ func (s ShardSettlement) Clone() ShardSettlement {
 	cloned := s
 	cloned.Outgoing = cloneIntentResults(s.Outgoing)
 	cloned.Incoming = cloneIntentResults(s.Incoming)
+	cloned.FallbackIncoming = cloneIntentResults(s.FallbackIncoming)
 
 	return cloned
 }

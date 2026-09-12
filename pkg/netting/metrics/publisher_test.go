@@ -67,6 +67,39 @@ func TestPublisherReportsCommittedLifecyclePhases(t *testing.T) {
 	require.Positive(t, payload.Metrics[2].StateWriteCount)
 }
 
+func TestPublisherReportsDirectFallbackIncomingMetric(t *testing.T) {
+	t.Parallel()
+
+	intentID := metricIntentID(9)
+	committedAt := time.Unix(20, 0)
+	committed := &block.Block{Body: block.Body{TxList: []transaction.Transaction{{
+		SettlementTxOpt: transaction.SettlementTxOpt{Settlement: &model.SettlementPackage{
+			Header: model.MatchRootBlockBody{WindowID: 1},
+			Settlement: model.ShardSettlement{
+				WindowID: 1,
+				FallbackIncoming: []model.IntentResult{{
+					IntentID:       intentID,
+					FallbackAmount: big.NewInt(3),
+				}},
+			},
+		}},
+	}}}}
+	conn := &metricP2P{}
+	publisher := metrics.NewPublisher(true, 0, conn, metricResolver{})
+
+	require.NoError(t, publisher.PublishCommittedBlock(context.Background(), 1, committed, committedAt))
+	require.Len(t, conn.messages, 1)
+
+	var payload message.NettingExecutionMetricMsg
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(conn.messages[0].GetPayload())).Decode(&payload))
+	require.Len(t, payload.Metrics, 1)
+	require.Equal(t, model.MetricPhaseFallback, payload.Metrics[0].Phase)
+	require.Equal(t, intentID, payload.Metrics[0].IntentID)
+	require.True(t, payload.Metrics[0].Final)
+	require.Equal(t, int64(1), payload.Metrics[0].ShardID)
+	require.Equal(t, committedAt, payload.Metrics[0].CommittedAt)
+}
+
 func metricPayment(source, destination, amount, nonce int64) intent.PaymentIntent {
 	var sender, recipient account.Address
 	sender[0] = byte(source + 1)
@@ -77,6 +110,13 @@ func metricPayment(source, destination, amount, nonce int64) intent.PaymentInten
 		SourceShard: source, DestinationShard: destination, Amount: big.NewInt(amount),
 		Nonce: uint64(nonce), ExpiryEpoch: 100,
 	}
+}
+
+func metricIntentID(value byte) intent.ID {
+	var id intent.ID
+	id[0] = value
+
+	return id
 }
 
 type metricP2P struct {

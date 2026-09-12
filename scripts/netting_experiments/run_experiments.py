@@ -32,6 +32,17 @@ BEACON_SHARD_ID = 2147483646
 SOLVER_SHARD_ID = 2147483645
 SUPERVISOR_SHARD_ID = 2147483647
 CSV_HEADER = [f"col{i}" for i in range(17)]
+BLOCK_SIZE_LIMIT = 100
+DEFAULT_MAX_WINDOW_MS = 2000
+
+
+def default_netting_batch_size(shard_num: int, block_limit: int = BLOCK_SIZE_LIMIT) -> int:
+    return max(1, shard_num * block_limit)
+
+
+def batch_size_points(shard_num: int = 4, block_limit: int = BLOCK_SIZE_LIMIT) -> list[int]:
+    base = default_netting_batch_size(shard_num, block_limit)
+    return sorted({max(1, base // 4), max(1, base // 2), base, base * 2})
 
 
 @dataclass(frozen=True)
@@ -48,8 +59,9 @@ class RunSpec:
     tx_speed: int = 120
     shard_num: int = 4
     node_num: int = 4
-    batch_size: int = 20
-    max_window_ms: int = 1000
+    block_limit: int = BLOCK_SIZE_LIMIT
+    batch_size: int = 0
+    max_window_ms: int = DEFAULT_MAX_WINDOW_MS
     block_interval_ms: int = 500
     network_latency_ms: int = 0
     balance_ratio: float = 1.0
@@ -79,6 +91,8 @@ def main() -> int:
     parser.add_argument("--seeds", default="", help="override seeds, e.g. 1,2,3")
     parser.add_argument("--tx-number", type=positive_int, help="override profile tx_number")
     parser.add_argument("--tx-speed", type=positive_int, help="override profile tx_injection_speed")
+    parser.add_argument("--block-limit", type=positive_int, help="override system block transaction limit")
+    parser.add_argument("--max-window-ms", type=positive_int, help="override netting max_window_duration_ms")
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -96,7 +110,15 @@ def main() -> int:
     dataset_path = repo_path(args.dataset, repo)
     selected = selected_experiments(args.experiments)
     seeds = parse_seeds(args.seeds) or default_seeds(args.profile)
-    specs = build_specs(args.profile, selected, seeds, args.tx_number, args.tx_speed)
+    specs = build_specs(
+        args.profile,
+        selected,
+        seeds,
+        args.tx_number,
+        args.tx_speed,
+        args.block_limit,
+        args.max_window_ms,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.dry_run:
@@ -177,26 +199,30 @@ def build_specs(
     seeds: list[int],
     tx_number_override: Optional[int] = None,
     tx_speed_override: Optional[int] = None,
+    block_limit_override: Optional[int] = None,
+    max_window_ms_override: Optional[int] = None,
 ) -> list[RunSpec]:
+    block_limit = block_limit_override or BLOCK_SIZE_LIMIT
+    default_max_window_ms = max_window_ms_override or DEFAULT_MAX_WINDOW_MS
     if profile == "smoke":
         tx_number, tx_speed = 32, 160
         balance_points = [0.0, 1.0]
-        batch_points = [10, 20]
-        window_points = [250, 1000]
+        batch_points = [default_netting_batch_size(4, block_limit)]
+        window_points = [default_max_window_ms] if max_window_ms_override else [1000, 2000]
         scale_points = [4]
         latency_points = [0, 50]
     elif profile == "pilot":
         tx_number, tx_speed = 120, 160
         balance_points = [0.0, 0.25, 0.5, 0.75, 1.0]
-        batch_points = [10, 20, 50, 100, 200]
-        window_points = [100, 500, 1000, 2000, 5000]
+        batch_points = batch_size_points(4, block_limit)
+        window_points = [default_max_window_ms] if max_window_ms_override else [500, 1000, 2000, 3000, 5000]
         scale_points = [4, 8, 16]
         latency_points = [0, 25, 50, 100]
     else:
         tx_number, tx_speed = 50000, 2000
         balance_points = [0.0, 0.25, 0.5, 0.75, 1.0]
-        batch_points = [10, 20, 50, 100, 200]
-        window_points = [100, 500, 1000, 2000, 5000]
+        batch_points = batch_size_points(4, block_limit)
+        window_points = [default_max_window_ms] if max_window_ms_override else [500, 1000, 2000, 3000, 5000]
         scale_points = [4, 8, 16]
         latency_points = [0, 25, 50, 100, 200]
 
@@ -219,8 +245,10 @@ def build_specs(
                         consensus_type="static_relay",
                         netting_enabled=False,
                         workload="dataset",
+                        block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
+                        max_window_ms=default_max_window_ms,
                         seed=seed,
                     ),
                     RunSpec(
@@ -231,8 +259,10 @@ def build_specs(
                         consensus_type="static_broker",
                         netting_enabled=False,
                         workload="dataset",
+                        block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
+                        max_window_ms=default_max_window_ms,
                         seed=seed,
                     ),
                     RunSpec(
@@ -243,8 +273,10 @@ def build_specs(
                         consensus_type="static_relay",
                         netting_enabled=True,
                         workload="dataset",
+                        block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
+                        max_window_ms=default_max_window_ms,
                         seed=seed,
                     ),
                 ]
@@ -257,8 +289,10 @@ def build_specs(
                         "reverse_ratio",
                         f"{ratio:.2f}",
                         workload="balance",
+                        block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
+                        max_window_ms=default_max_window_ms,
                         balance_ratio=ratio,
                         seed=seed,
                     )
@@ -271,9 +305,11 @@ def build_specs(
                         "batch_size",
                         str(batch_size),
                         workload="balance",
+                        block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
                         batch_size=batch_size,
+                        max_window_ms=default_max_window_ms,
                         balance_ratio=1.0,
                         seed=seed,
                     )
@@ -286,6 +322,7 @@ def build_specs(
                         "max_window_ms",
                         str(window_ms),
                         workload="balance",
+                        block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
                         max_window_ms=window_ms,
@@ -301,10 +338,10 @@ def build_specs(
                         "matcher_mode",
                         mode,
                         workload="ablation",
+                        block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
-                        batch_size=max(200, tx_number),
-                        max_window_ms=max(5000, window_points[-1]),
+                        max_window_ms=max(default_max_window_ms, window_points[-1]),
                         matcher_mode=mode,
                         seed=seed,
                     )
@@ -317,9 +354,11 @@ def build_specs(
                         "shard_num",
                         str(shard_num),
                         workload="balance",
+                        block_limit=block_limit,
                         tx_number=tx_number if user_tx_number else max(tx_number, shard_num * 24),
                         tx_speed=tx_speed,
                         shard_num=shard_num,
+                        max_window_ms=default_max_window_ms,
                         balance_ratio=1.0,
                         seed=seed,
                     )
@@ -333,9 +372,11 @@ def build_specs(
                         "network_latency_ms",
                         str(latency),
                         workload="balance",
+                        block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
                         network_latency_ms=latency,
+                        max_window_ms=default_max_window_ms,
                         balance_ratio=0.75,
                         shard_block_intervals_ms=intervals,
                         seed=seed,
@@ -825,7 +866,7 @@ def write_config(path: Path, run_dir: Path, workload_path: Path, spec: RunSpec) 
     content = f"""system:
   shard_num: {spec.shard_num}
   node_num: {spec.node_num}
-  limit: 100
+  limit: {spec.block_limit}
   consensus_type: "{spec.consensus_type}"
   log:
     log_dir: "{run_dir}/"
@@ -919,6 +960,7 @@ def summarize_run(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[str, o
         "shard_num": spec.shard_num,
         "node_num": spec.node_num,
         "tx_number": spec.tx_number,
+        "block_limit": spec.block_limit,
         "batch_size": spec.batch_size,
         "max_window_ms": spec.max_window_ms,
         "matcher_mode": spec.matcher_mode,
@@ -1195,7 +1237,7 @@ def parse_timestamp(value: str) -> float:
 
 SUMMARY_FIELDS = [
     "run_id", "experiment", "variable", "value", "method", "seed", "shard_num", "node_num",
-    "tx_number", "batch_size", "max_window_ms", "matcher_mode", "network_latency_ms",
+    "tx_number", "block_limit", "batch_size", "max_window_ms", "matcher_mode", "network_latency_ms",
     "elapsed_s", "tx_committed", "throughput_tps", "avg_latency_s", "p50_latency_s",
     "p95_latency_s", "matched_value_ratio", "fallback_value_ratio", "matched_intent_ratio",
     "fallback_intent_ratio", "split_allocations", "match_time_ms", "proof_time_ms",

@@ -120,15 +120,15 @@ func settlementMeasurements(
 	_ = batch.VerifySettlementPackage(*tx.Settlement)
 	proofTime := time.Since(started)
 	settlement := tx.Settlement.Settlement
-	measurements := make([]model.NettingExecutionMetric, 0, len(settlement.Outgoing))
+	measurements := make([]model.NettingExecutionMetric, 0, len(settlement.Outgoing)+len(settlement.FallbackIncoming))
 	fallbackCount := int64(0)
 	for _, result := range settlement.Outgoing {
 		if result.FallbackAmount.Sign() > 0 {
 			fallbackCount++
 		}
 	}
-	reads := int64(1 + 3*len(settlement.Outgoing) + len(settlement.Incoming))
-	writes := int64(1+4*len(settlement.Outgoing)+2*len(settlement.Incoming)) + 4*fallbackCount
+	reads := int64(1 + 3*len(settlement.Outgoing) + len(settlement.Incoming) + len(settlement.FallbackIncoming))
+	writes := int64(1+4*len(settlement.Outgoing)+2*len(settlement.Incoming)+2*len(settlement.FallbackIncoming)) + fallbackCount
 	for idx, result := range settlement.Outgoing {
 		metric := model.NettingExecutionMetric{
 			Phase: model.MetricPhaseSettlement, BatchID: settlement.BatchID,
@@ -141,6 +141,13 @@ func settlementMeasurements(
 			metric.ProofVerificationTime = proofTime
 		}
 		measurements = append(measurements, metric)
+	}
+	for _, result := range settlement.FallbackIncoming {
+		measurements = append(measurements, model.NettingExecutionMetric{
+			Phase: model.MetricPhaseFallback, BatchID: settlement.BatchID,
+			WindowID: settlement.WindowID, IntentID: result.IntentID, ShardID: shardID,
+			CommittedAt: committedAt, Final: true,
+		})
 	}
 
 	return measurements

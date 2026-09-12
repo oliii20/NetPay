@@ -62,7 +62,14 @@ stale `GOOS` or `GOARCH` environment variables do not accidentally produce a
 non-Windows executable named `*.exe`.
 
 Use `--tx-number` and `--tx-speed` to override the workload size and injection
-rate chosen by `--profile`.
+rate chosen by `--profile`. Use `--block-limit` to override `system.limit`.
+Netting windows now close only by `MaxWindowDuration`; the default is `2000ms`,
+which is four default block intervals. Override it from the command line with
+`--max-window-ms`, for example:
+
+```bash
+GOCACHE="$PWD/.exp/gocache" python3 scripts/netting_experiments/run_experiments.py --profile pilot --experiments exp1 --max-window-ms 3000
+```
 
 The plotting script reads the experiment groups present in
 `.exp/netting-paper/summary.csv` and generates the corresponding figures. For
@@ -87,12 +94,13 @@ from the raw per-run CSV files when plotting an older summary.
    `netting_static_relay` on the same selectedTxs trace slice.
 2. Netting benefit: synthetic controlled bidirectional traffic with reverse
    ratios `0, 0.25, 0.5, 0.75, 1.0`.
-3. BatchSize sensitivity: `10, 20, 50, 100, 200`.
-4. MaxWindowDuration sensitivity: `100ms, 500ms, 1s, 2s, 5s`.
+3. BatchSize compatibility: `batch_size` is kept in the config and summary for
+   compatibility, but it no longer closes netting windows.
+4. MaxWindowDuration sensitivity: `500ms, 1s, 2s, 3s, 5s`.
 5. Matcher ablation: `exact_only`, `best_fit`, and `full`.
-   This group uses a larger batch and longer window than the smoke default so
-   the measured difference comes from the matching algorithm rather than from
-   premature Vector-Cut closure.
+   This group uses a longer window than the smoke default so the measured
+   difference comes from the matching algorithm rather than from premature
+   Vector-Cut closure.
 6. Scale sensitivity: shard counts `4, 8, 16`, with four nodes per shard.
 7. Asynchrony and network latency: direct-RPC latency sweep with heterogeneous
    shard block intervals.

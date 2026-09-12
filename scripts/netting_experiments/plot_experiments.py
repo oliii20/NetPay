@@ -318,7 +318,7 @@ def plot_balance(rows: list[dict[str, str]], path: Path) -> None:
 def plot_batch_size(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp3_batch_size")
     chart = PNGFigure(980, 550)
-    chart.title("BatchSize sensitivity", 18, 22)
+    chart.title("BatchSize compatibility", 18, 22)
     panels = [
         ("matched_intent_ratio", "Matching rate", True),
         ("throughput_tps", "Throughput (tx/s)"),

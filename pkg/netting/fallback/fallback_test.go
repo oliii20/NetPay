@@ -90,6 +90,34 @@ func TestPublisherSendsPendingAndCompletionMessages(t *testing.T) {
 	require.Equal(t, message.FallbackTxMessageType, p2p.messages[3].GetMsgType())
 }
 
+func TestPublisherReportsDirectFallbackIncomingProgress(t *testing.T) {
+	t.Parallel()
+
+	intentID := modelFallbackIntentID(9)
+	p2p := &fallbackP2P{}
+	publisher := fallback.NewPublisher(
+		true, 0, fallbackReader{},
+		network.NewConnHandler(p2p), fallbackResolver{},
+	)
+	committed := &block.Block{Body: block.Body{TxList: []transaction.Transaction{{
+		SettlementTxOpt: transaction.SettlementTxOpt{Settlement: &model.SettlementPackage{
+			Settlement: model.ShardSettlement{
+				FallbackIncoming: []model.IntentResult{{
+					IntentID:       intentID,
+					FallbackAmount: big.NewInt(3),
+				}},
+			},
+		}},
+	}}}}
+
+	require.NoError(t, publisher.PublishAfterBlock(context.Background(), committed))
+	require.Len(t, p2p.messages, 1)
+	require.Equal(t, message.NettingProgressMessageType, p2p.messages[0].GetMsgType())
+	var progress message.NettingProgressMsg
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(p2p.messages[0].GetPayload())).Decode(&progress))
+	require.Equal(t, []intent.ID{intentID}, progress.IntentIDs)
+}
+
 func TestPublisherSuppressesImmediatePendingFallbackRepublish(t *testing.T) {
 	t.Parallel()
 

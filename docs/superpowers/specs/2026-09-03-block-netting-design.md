@@ -316,18 +316,16 @@ Intent 满足以下条件后计入当前窗口：
 
 窗口在第一个 eligible Intent 出现时设置 `OpenedAt`。空区块不会启动计时，没有 pending Intent 时不会生成空批次。Clock 通过接口注入，测试使用 FakeClock。
 
-### 9.4 两个关闭条件
+### 9.4 关闭条件
 
 ```text
-sizeReady = PendingIntentCount >= BatchSize
-
 timeReady = PendingIntentCount > 0
     && Now - OpenedAt >= MaxWindowDuration
 
-ShouldClose = sizeReady || timeReady
+ShouldClose = timeReady
 ```
 
-BatchSize 统计所有普通分片、所有方向的全局 Intent 数量。它是关闭阈值而不是严格上限，因为 Vector-Cut 必须在完整区块边界关闭。
+BatchSize 保留为兼容配置字段，但不再触发窗口关闭。窗口只由 MaxWindowDuration 控制，避免低 intent 密度或单分片 receipt 让窗口过早冻结。
 
 ### 9.5 封存边界
 
@@ -705,7 +703,7 @@ solver:
 - 同输入重复运行结果相同。
 - 随机属性测试验证金额守恒。
 - Receipt 乱序、重复、缺口和冲突。
-- BatchSize 和 MaxWindowDuration。
+- MaxWindowDuration。
 - 慢分片 Cut 不推进且不阻塞其他分片。
 
 ### 21.2 状态测试

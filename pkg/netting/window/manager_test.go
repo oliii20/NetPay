@@ -41,7 +41,7 @@ func TestManagerAdvancesOnlyContinuousReceipts(t *testing.T) {
 	require.Equal(t, 2, manager.PendingIntentCount())
 }
 
-func TestManagerClosesAtGlobalBatchSizeWithVectorCut(t *testing.T) {
+func TestManagerClosesOnlyAfterMaxWindowDurationWithVectorCut(t *testing.T) {
 	t.Parallel()
 
 	clock := newFakeClock()
@@ -53,9 +53,14 @@ func TestManagerClosesAtGlobalBatchSizeWithVectorCut(t *testing.T) {
 
 	sealed, err = manager.AddReceipt(testReceipt(1, 2, testHash(0x20), testHash(0x21), 3))
 	require.NoError(t, err)
+	require.Nil(t, sealed)
+	require.Equal(t, 3, manager.PendingIntentCount())
+
+	clock.Advance(time.Minute)
+	sealed = manager.TryClose()
 	require.NotNil(t, sealed)
 	require.Equal(t, uint64(1), sealed.WindowID)
-	require.Equal(t, "batch_size", sealed.CloseReason)
+	require.Equal(t, "max_window_duration", sealed.CloseReason)
 	require.Equal(t, 1, manager.FrozenWindowCount())
 	require.Len(t, sealed.Intents, 3)
 	require.Len(t, sealed.Receipts, 2)
@@ -93,27 +98,35 @@ func TestManagerDoesNotStartTimerForEmptyBlocks(t *testing.T) {
 	require.Len(t, sealed.Receipts, 2)
 }
 
-func TestBatchSizeIsThresholdNotStrictLimit(t *testing.T) {
+func TestWindowCanExceedBatchSizeUntilDuration(t *testing.T) {
 	t.Parallel()
 
+	clock := newFakeClock()
 	manager := newManager(
 		t,
 		window.Config{ShardCount: 2, BatchSize: 2, MaxWindowDuration: time.Minute},
-		newFakeClock(),
+		clock,
 	)
 	sealed, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1, 2, 3))
 	require.NoError(t, err)
+	require.Nil(t, sealed)
+	require.Equal(t, 3, manager.PendingIntentCount())
+
+	clock.Advance(time.Minute)
+	sealed = manager.TryClose()
 	require.NotNil(t, sealed)
+	require.Equal(t, "max_window_duration", sealed.CloseReason)
 	require.Len(t, sealed.Intents, 3)
 }
 
-func TestBufferedCatchUpSealsAtEachBlockBoundary(t *testing.T) {
+func TestBufferedCatchUpSealsOnceWhenDurationExpires(t *testing.T) {
 	t.Parallel()
 
+	clock := newFakeClock()
 	manager := newManager(
 		t,
 		window.Config{ShardCount: 2, BatchSize: 1, MaxWindowDuration: time.Minute},
-		newFakeClock(),
+		clock,
 	)
 	block2Hash := testHash(0x11)
 	block3Hash := testHash(0x12)
@@ -124,17 +137,16 @@ func TestBufferedCatchUpSealsAtEachBlockBoundary(t *testing.T) {
 
 	first, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), block2Hash, 1))
 	require.NoError(t, err)
+	require.Nil(t, first)
+	require.Equal(t, 3, manager.PendingIntentCount())
+
+	clock.Advance(time.Minute)
+	first = manager.TryClose()
 	require.NotNil(t, first)
 	require.Equal(t, uint64(1), first.WindowID)
-	require.Equal(t, uint64(2), first.Cuts[0].EndHeight)
-
-	for windowID, endHeight := range []uint64{2, 3, 4} {
-		frozen, ok := manager.PeekFrozen()
-		require.True(t, ok)
-		require.Equal(t, uint64(windowID+1), frozen.WindowID)
-		require.Equal(t, endHeight, frozen.Cuts[0].EndHeight)
-		require.NoError(t, manager.AcknowledgeFrozen(frozen.WindowID))
-	}
+	require.Equal(t, uint64(4), first.Cuts[0].EndHeight)
+	require.Len(t, first.Receipts, 3)
+	require.NoError(t, manager.AcknowledgeFrozen(first.WindowID))
 	_, ok := manager.PeekFrozen()
 	require.False(t, ok)
 }
@@ -142,19 +154,26 @@ func TestBufferedCatchUpSealsAtEachBlockBoundary(t *testing.T) {
 func TestSuccessiveWindowsUsePreviousVectorCut(t *testing.T) {
 	t.Parallel()
 
+	clock := newFakeClock()
 	manager := newManager(
 		t,
 		window.Config{ShardCount: 2, BatchSize: 1, MaxWindowDuration: time.Minute},
-		newFakeClock(),
+		clock,
 	)
 	first, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1))
 	require.NoError(t, err)
+	require.Nil(t, first)
+	clock.Advance(time.Minute)
+	first = manager.TryClose()
 	require.Equal(t, uint64(1), first.WindowID)
 	require.Equal(t, uint64(1), first.Cuts[0].PreviousHeight)
 	require.Equal(t, uint64(2), first.Cuts[0].EndHeight)
 
 	second, err := manager.AddReceipt(testReceipt(0, 3, testHash(0x11), testHash(0x12), 2))
 	require.NoError(t, err)
+	require.Nil(t, second)
+	clock.Advance(time.Minute)
+	second = manager.TryClose()
 	require.Equal(t, uint64(2), second.WindowID)
 	require.Equal(t, uint64(2), second.Cuts[0].PreviousHeight)
 	require.Equal(t, uint64(3), second.Cuts[0].EndHeight)
@@ -241,7 +260,6 @@ func TestManagerRejectsInvalidConfigurationAndReceipts(t *testing.T) {
 	validCfg := window.Config{ShardCount: 2, BatchSize: 10, MaxWindowDuration: time.Minute}
 	for name, cfg := range map[string]window.Config{
 		"shard count": {ShardCount: 0, BatchSize: 1, MaxWindowDuration: time.Second},
-		"batch size":  {ShardCount: 1, BatchSize: 0, MaxWindowDuration: time.Second},
 		"duration":    {ShardCount: 1, BatchSize: 1, MaxWindowDuration: 0},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -16,7 +16,7 @@
 
 1. 用户交易输入后，Supervisor 将跨分片 NormalTx 转换为 PaymentIntent，并发送到源分片。
 2. 源分片在普通区块共识过程中执行 intent 预留，写入 registry，并在区块 finalized 后向 Solver 发布 receipt。
-3. Solver 根据 receipt 维护异步 Vector-Cut 窗口，满足 BatchSize 或 MaxWindowDuration 后冻结窗口。
+3. Solver 根据 receipt 维护异步 Vector-Cut 窗口，达到 MaxWindowDuration 后冻结窗口。
 4. Solver 对窗口内 intent 执行 exact → best-fit → split 撮合，生成 batch sidecar、settlement package 和 MatchRoot。
 5. Beacon 节点验证 batch 可由 receipt 和 matcher mode 确定性派生，再通过 PBFT commit MatchRoot。
 6. 普通分片收到 MatchRootFinalized 和 SettlementPackage 后，本地验证 Merkle proof，执行 reserved balance 消耗和收款人入账。
@@ -28,7 +28,7 @@
 | 阶段 | 主题 | 主要文件 | 作用 |
 | --- | --- | --- | --- |
 | 1 | 三阶段撮合算法 | pkg/netting/matcher/* | 实现 exact、best-fit、split 的确定性双向净额撮合。 |
-| 2 | 异步窗口与 Vector-Cut | pkg/netting/window/* | 用 BatchSize 和 MaxWindowDuration 关闭窗口，并冻结各分片连续水位。 |
+| 2 | 异步窗口与 Vector-Cut | pkg/netting/window/* | 用 MaxWindowDuration 关闭窗口，并冻结各分片连续水位。 |
 | 3 | 资金预留与 Escrow | pkg/netting/registry/*; pkg/chain/intent.go | 在源分片验证 intent 后锁定 reserved balance，防止撮合期间重复花费。 |
 | 4 | 源分片 receipt 发布 | pkg/netting/receipt/*; txblockop/* | 普通分片在区块确认后向 Solver 发布已预留 intent 的区块确认信息。 |
 | 5 | Solver 批处理 | pkg/netting/solver/*; pkg/netting/batch/* | 收集 receipt、关闭窗口、构造 MatchRoot 与 settlement sidecar。 |
@@ -50,7 +50,7 @@
 | 交易与 intent 类型 | pkg/core/intent/intent.go; pkg/core/transaction/transaction.go | 新增 PaymentIntent 数据结构，以及 IntentSubmit、Settlement、ReservedFallback、FallbackCompleted 等系统交易类型。 | 把用户跨分片支付从普通交易抽象为可预留、可撮合、可证明、可回退的 intent 生命周期。 |
 | 链上预留 | pkg/chain/intent.go; pkg/netting/registry/registry.go; pkg/chain/stateio.go | 实现 source shard 验证 intent、nonce、余额并写入 reservation registry；记录 matched/fallback/status/batch。 | 保证资金在撮合窗口内不能被重复使用，是方案安全性的链上根。 |
 | 撮合算法 | pkg/netting/matcher/matcher.go | 实现 exact-only、best-fit、full 三种模式；full 模式执行 exact → best-fit → split。 | 对应论文提出的实用撮合顺序，并为第 5 组消融实验提供开关。 |
-| Vector-Cut 窗口 | pkg/netting/window/manager.go; pkg/netting/window/state.go | 按 receipt 连续水位维护 open/frozen window；满足 BatchSize 或 MaxWindowDuration 即关闭窗口。 | 避免依赖全局区块高度，使异步分片网络也能稳定工作。 |
+| Vector-Cut 窗口 | pkg/netting/window/manager.go; pkg/netting/window/state.go | 按 receipt 连续水位维护 open/frozen window；达到 MaxWindowDuration 即关闭窗口。 | 避免依赖全局区块高度，使异步分片网络也能稳定工作。 |
 | 批次构造与 Merkle 证明 | pkg/netting/batch/builder.go; pkg/netting/model/batch.go; pkg/netting/model/result.go | 从 frozen window 构造 intent results、shard settlements、CutRoot、IntentResultRoot、ShardSettlementRoot、MatchRoot 和 BatchID；header 写入 MatcherMode。 | 让 Beacon 只共识 MatchRoot，同时各分片可以用 proof 独立验证自己要执行的 settlement。 |
 | Solver 状态机 | pkg/netting/solver/node.go; pkg/netting/batchstore/store.go | Solver 收集 receipt、恢复窗口状态、构造 proposal、持久化 sidecar，并确保同一 pending batch 只提交一次。 | 实现链下撮合器的可恢复批处理逻辑，避免 Beacon 重复 proposal 造成序列错误。 |
 | Beacon 验证与共识接入 | pkg/netting/beacon/validator.go; pkg/netting/beacon/store.go; consensus/pbft/insideop/beaconop/beaconop.go | Beacon 验证 batch sequence、Vector-Cut 覆盖、intent 未重复、未过期、以及按 MatcherMode 重新确定性派生结果；PBFT commit 后广播 MatchRootFinalized。 | 把大量跨片支付的一致性确认压缩成一次 Beacon 共识。 |
@@ -61,7 +61,7 @@
 | 消息协议 | pkg/message/nettingmsg.go; pkg/message/message.go; pkg/message/pbftmsg.go | 新增 FinalizedBlockReceipt、BatchProposal、MatchRootFinalized、SettlementPackage、FallbackTx、FallbackCompleted、NettingMetric、NettingProgress 等消息和 PBFT proposal 包装。 | 让 netting 的链上/链下角色复用原有 WrappedMsg 与 PBFT 消息通道。 |
 | Supervisor workload | supervisor/committee/netting.go; supervisor/committee/staticrelay.go; supervisor/committee/staticbroker.go | Supervisor 将跨分片 NormalTx 转为 PaymentIntent，并通过 progress、fallback completion、execution metric 判断 netting 工作是否完成。 | 让实验可以用原始数据集驱动 netting 机制，并让 supervisor 正确终止。 |
 | 指标收集 | pkg/netting/metrics/publisher.go; supervisor/measure/router.go; supervisor/measure/nettingstats/nettingstats.go | 将 batch、Beacon、execution 三类指标路由到 netting collector；输出 netting_batch_metrics.csv 与 netting_intent_metrics.csv。 | 支撑论文实验中的吞吐、延迟、matched/fallback ratio、Beacon overhead、proof time、capital lock time 等指标。 |
-| 实验与画图 | scripts/netting_experiments/run_experiments.py; scripts/netting_experiments/plot_experiments.py; docs/netting-experiments.md; figures/netting/*.png | 实现 baseline、净额化收益、BatchSize、MaxWindowDuration、算法消融、系统规模、异步/网络延迟 7 组实验，并生成论文风格 PNG 图。 | 让论文实验从运行、汇总到可视化形成可重复流水线。 |
+| 实验与画图 | scripts/netting_experiments/run_experiments.py; scripts/netting_experiments/plot_experiments.py; docs/netting-experiments.md; figures/netting/*.png | 实现 baseline、净额化收益、时间窗口、算法消融、系统规模、异步/网络延迟等实验，并生成论文风格 PNG 图。 | 让论文实验从运行、汇总到可视化形成可重复流水线。 |
 | 测试文件 | pkg/netting/**/*_test.go; pkg/chain/*_test.go; supervisor/**/*_test.go; consensus/**/*_test.go; pkg/message/*_test.go | 为 matcher、window、batch、Beacon、Solver、settlement、fallback、metrics、supervisor 路由等模块增加单元/端到端测试。 | 降低大改动引入隐蔽状态机错误的风险。 |
 
 ## 4. 7 组论文实验代码与图
@@ -70,8 +70,8 @@
 | --- | --- | --- | --- |
 | 1 Baseline | static_relay、static_broker、netting_static_relay | matched_intent_ratio、throughput、latency、stage latency breakdown、cross_messages_per_tx | 展示你的机制是否减少逐笔跨片消息，并定位端到端延迟主要消耗在哪个阶段。 |
 | 2 Netting benefit | reverse_ratio = 0%,25%,50%,75%,100% | matched_intent_ratio、matched_value_ratio、fallback_value_ratio | 证明双向流量越强，净额化收益越高。 |
-| 3 BatchSize | 10,20,50,100,200 | matched_intent_ratio、throughput、beacon_bytes_per_intent、avg_latency_s | 展示批量摊销收益与等待/锁资成本的权衡。 |
-| 4 MaxWindowDuration | 100ms,500ms,1s,2s,5s | matched_intent_ratio、matched_value_ratio、avg_latency_s | 展示撮合窗口越长，撮合率和端到端延迟之间的 trade-off。 |
+| 3 BatchSize | 兼容保留参数，不再触发窗口关闭 | matched_intent_ratio、throughput、beacon_bytes_per_intent、avg_latency_s | 记录 batch_size 参数移除后的兼容性影响。 |
+| 4 MaxWindowDuration | 500ms,1s,2s,3s,5s | matched_intent_ratio、matched_value_ratio、avg_latency_s | 展示撮合窗口越长，撮合率和端到端延迟之间的 trade-off。 |
 | 5 Matcher ablation | exact_only、best_fit、full | matched_intent_ratio、matched_value_ratio、split_allocations | 证明三阶段策略相对于简单 exact-only 的价值。 |
 | 6 Scale | shard_num = 4,8,16; node_num = 4 | matched_intent_ratio、throughput、match_time_ms、proof_time_ms | 展示系统规模扩展时 Solver/Beacon/分片验证开销。 |
 | 7 Async/network latency | network_latency_ms sweep + heterogeneous shard block intervals | matched_intent_ratio、avg_latency_s、watermark_skew | 验证异步窗口规则在无全局高度条件下仍稳定。 |
@@ -108,6 +108,6 @@
 ## 7. 进一步写论文时可强调的实现边界
 
 - 当前实现先不考虑用户签名和拜占庭求解器安全实验；PaymentIntent 的签名字段和恶意 Solver 检测可作为后续安全性实验扩展。
-- 当前窗口关闭规则保留 BatchSize 与 MaxWindowDuration，不依赖全局区块高度；Vector-Cut 由各分片连续 finalized receipt 冻结，因此可用于异步分片网络。
+- 当前窗口关闭规则仅使用 MaxWindowDuration，不依赖全局区块高度；Vector-Cut 由各分片连续 finalized receipt 冻结，因此可用于异步分片网络。
 - 第 2–7 组实验主要使用受控 synthetic workload，以隔离变量；第 1 组 baseline 使用 selectedTxs_300K.csv 的真实 trace 切片。
 - cross_messages_per_tx 是协议级估算，排除了 TCP/IP、gRPC、protobuf framing；Beacon bytes 和 proof time 来自 netting metrics 路径。
