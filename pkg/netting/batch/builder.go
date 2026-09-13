@@ -30,7 +30,8 @@ var (
 )
 
 type Builder struct {
-	MatcherMode matcher.Mode
+	MatcherMode         matcher.Mode
+	SettlementChunkSize int
 }
 
 func (b Builder) Build(frozen window.FrozenWindow, previousBatchID merkle.Hash) (model.BatchProposal, error) {
@@ -59,9 +60,10 @@ func (b Builder) BuildMeasured(
 	}
 	matchTime := time.Since(matchStarted)
 	results := sortedResults(matchOutput.Results)
+	chunkSize := normalizeSettlementChunkSize(b.SettlementChunkSize)
 
 	merkleStarted := time.Now()
-	settlements, shardLeaves, err := buildSettlements(frozen.WindowID, shardIDs, results)
+	settlements, shardLeaves, err := buildSettlements(frozen.WindowID, shardIDs, results, chunkSize)
 	if err != nil {
 		return model.BatchProposal{}, model.NettingBatchMetric{}, err
 	}
@@ -82,6 +84,7 @@ func (b Builder) BuildMeasured(
 			PreviousBatchID:     previousBatchID,
 			WindowID:            frozen.WindowID,
 			MatcherMode:         string(matcherMode),
+			SettlementChunkSize: uint32(chunkSize),
 			CutRoot:             roots.CutRoot,
 			IntentResultRoot:    roots.IntentResultRoot,
 			ShardSettlementRoot: roots.ShardSettlementRoot,
@@ -294,6 +297,7 @@ func buildSettlements(
 	windowID uint64,
 	shardIDs []int64,
 	results []model.IntentResult,
+	chunkSize int,
 ) ([]model.ShardSettlement, []merkle.Leaf, error) {
 	byShard := make(map[int64]*model.ShardSettlement, len(shardIDs))
 	for _, shardID := range shardIDs {
@@ -326,26 +330,212 @@ func buildSettlements(
 		sortResults(settlement.Outgoing)
 		sortResults(settlement.Incoming)
 		sortResults(settlement.FallbackIncoming)
-		chunkPayload, err := SettlementPayload(*settlement)
+		chunks, err := splitSettlement(*settlement, chunkSize)
 		if err != nil {
 			return nil, nil, err
 		}
-		chunkTree, err := merkle.Build(ChunkLeafDomain, []merkle.Leaf{{
-			Key: uint32Key(settlement.ChunkIndex), Payload: chunkPayload,
-		}})
+		chunkLeaves := make([]merkle.Leaf, len(chunks))
+		for idx, chunk := range chunks {
+			chunkPayload, payloadErr := SettlementPayload(chunk)
+			if payloadErr != nil {
+				return nil, nil, payloadErr
+			}
+			chunkLeaves[idx] = merkle.Leaf{Key: uint32Key(chunk.ChunkIndex), Payload: chunkPayload}
+		}
+		chunkTree, err := merkle.Build(ChunkLeafDomain, chunkLeaves)
 		if err != nil {
 			return nil, nil, fmt.Errorf("build shard %d chunk tree: %w", shardID, err)
 		}
 		shardCommitment := model.ShardCommitment{
-			ShardID: shardID, ShardRoot: chunkTree.Root(), ChunkCount: settlement.ChunkCount,
+			ShardID: shardID, ShardRoot: chunkTree.Root(), ChunkCount: uint32(len(chunks)),
 		}
 		shardLeaves = append(shardLeaves, merkle.Leaf{
 			Key: int64Key(shardID), Payload: ShardCommitmentPayload(shardCommitment),
 		})
-		settlements = append(settlements, settlement.Clone())
+		settlements = append(settlements, chunks...)
 	}
 
 	return settlements, shardLeaves, nil
+}
+
+func normalizeSettlementChunkSize(size int) int {
+	if size <= 0 {
+		return 0
+	}
+
+	return size
+}
+
+type settlementDraft struct {
+	Outgoing         []model.IntentResult
+	Incoming         []model.IntentResult
+	FallbackIncoming []model.IntentResult
+}
+
+type settlementGroupKey struct {
+	Counterparty int64
+	AssetID      intent.AssetID
+}
+
+type matchedSettlementGroup struct {
+	Outgoing []model.IntentResult
+	Incoming []model.IntentResult
+}
+
+func splitSettlement(settlement model.ShardSettlement, chunkSize int) ([]model.ShardSettlement, error) {
+	if chunkSize <= 0 {
+		settlement.ChunkIndex = 0
+		settlement.ChunkCount = 1
+
+		return []model.ShardSettlement{settlement.Clone()}, nil
+	}
+
+	matchedGroups := make(map[settlementGroupKey]*matchedSettlementGroup)
+	fallbackOutgoing := make([]model.IntentResult, 0)
+	for _, result := range settlement.Outgoing {
+		if result.MatchedAmount.Sign() == 0 {
+			fallbackOutgoing = append(fallbackOutgoing, cloneResult(result))
+			continue
+		}
+		key := settlementGroupKey{Counterparty: result.Intent.DestinationShard, AssetID: result.Intent.AssetID}
+		group := matchedGroups[key]
+		if group == nil {
+			group = &matchedSettlementGroup{}
+			matchedGroups[key] = group
+		}
+		group.Outgoing = append(group.Outgoing, cloneResult(result))
+	}
+	for _, result := range settlement.Incoming {
+		key := settlementGroupKey{Counterparty: result.Intent.SourceShard, AssetID: result.Intent.AssetID}
+		group := matchedGroups[key]
+		if group == nil {
+			group = &matchedSettlementGroup{}
+			matchedGroups[key] = group
+		}
+		group.Incoming = append(group.Incoming, cloneResult(result))
+	}
+
+	drafts := make([]settlementDraft, 0)
+	keys := make([]settlementGroupKey, 0, len(matchedGroups))
+	for key := range matchedGroups {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Counterparty != keys[j].Counterparty {
+			return keys[i].Counterparty < keys[j].Counterparty
+		}
+
+		return bytes.Compare(keys[i].AssetID[:], keys[j].AssetID[:]) < 0
+	})
+	for _, key := range keys {
+		group := matchedGroups[key]
+		sortResults(group.Outgoing)
+		sortResults(group.Incoming)
+		groupDrafts, err := splitMatchedGroup(group.Outgoing, group.Incoming, chunkSize)
+		if err != nil {
+			return nil, err
+		}
+		drafts = append(drafts, groupDrafts...)
+	}
+	drafts = append(drafts, splitOutgoingOnly(fallbackOutgoing, chunkSize)...)
+	drafts = append(drafts, splitFallbackIncoming(settlement.FallbackIncoming, chunkSize)...)
+	if len(drafts) == 0 {
+		drafts = append(drafts, settlementDraft{})
+	}
+
+	chunks := make([]model.ShardSettlement, 0, len(drafts))
+	for idx, draft := range drafts {
+		chunk := model.ShardSettlement{
+			BatchID: settlement.BatchID, WindowID: settlement.WindowID, ShardID: settlement.ShardID,
+			ChunkIndex: uint32(idx), ChunkCount: uint32(len(drafts)),
+			Outgoing: cloneResults(draft.Outgoing), Incoming: cloneResults(draft.Incoming),
+			FallbackIncoming: cloneResults(draft.FallbackIncoming),
+		}
+		sortResults(chunk.Outgoing)
+		sortResults(chunk.Incoming)
+		sortResults(chunk.FallbackIncoming)
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks, nil
+}
+
+func splitMatchedGroup(
+	outgoing []model.IntentResult,
+	incoming []model.IntentResult,
+	chunkSize int,
+) ([]settlementDraft, error) {
+	if sumMatched(outgoing).Cmp(sumMatched(incoming)) != 0 {
+		return nil, ErrInvalidSettlement
+	}
+	drafts := make([]settlementDraft, 0)
+	var current settlementDraft
+	outSum := new(big.Int)
+	inSum := new(big.Int)
+	outIdx, inIdx := 0, 0
+	for outIdx < len(outgoing) || inIdx < len(incoming) {
+		if inIdx >= len(incoming) || (outIdx < len(outgoing) && outSum.Cmp(inSum) <= 0) {
+			current.Outgoing = append(current.Outgoing, cloneResult(outgoing[outIdx]))
+			outSum.Add(outSum, outgoing[outIdx].MatchedAmount)
+			outIdx++
+		} else {
+			current.Incoming = append(current.Incoming, cloneResult(incoming[inIdx]))
+			inSum.Add(inSum, incoming[inIdx].MatchedAmount)
+			inIdx++
+		}
+		if outSum.Cmp(inSum) == 0 && draftSize(current) >= chunkSize {
+			drafts = append(drafts, current)
+			current = settlementDraft{}
+			outSum.SetInt64(0)
+			inSum.SetInt64(0)
+		}
+	}
+	if draftSize(current) > 0 {
+		if outSum.Cmp(inSum) != 0 {
+			return nil, ErrInvalidSettlement
+		}
+		drafts = append(drafts, current)
+	}
+
+	return drafts, nil
+}
+
+func splitOutgoingOnly(results []model.IntentResult, chunkSize int) []settlementDraft {
+	sortResults(results)
+	drafts := make([]settlementDraft, 0)
+	for len(results) > 0 {
+		take := min(chunkSize, len(results))
+		drafts = append(drafts, settlementDraft{Outgoing: cloneResults(results[:take])})
+		results = results[take:]
+	}
+
+	return drafts
+}
+
+func splitFallbackIncoming(results []model.IntentResult, chunkSize int) []settlementDraft {
+	results = cloneResults(results)
+	sortResults(results)
+	drafts := make([]settlementDraft, 0)
+	for len(results) > 0 {
+		take := min(chunkSize, len(results))
+		drafts = append(drafts, settlementDraft{FallbackIncoming: cloneResults(results[:take])})
+		results = results[take:]
+	}
+
+	return drafts
+}
+
+func sumMatched(results []model.IntentResult) *big.Int {
+	sum := new(big.Int)
+	for _, result := range results {
+		sum.Add(sum, result.MatchedAmount)
+	}
+
+	return sum
+}
+
+func draftSize(draft settlementDraft) int {
+	return len(draft.Outgoing) + len(draft.Incoming) + len(draft.FallbackIncoming)
 }
 
 func CutPayload(cut model.ShardCut) []byte {
@@ -456,6 +646,15 @@ func cloneResult(result model.IntentResult) model.IntentResult {
 	cloned.Intent = result.Intent.Clone()
 	cloned.MatchedAmount = cloneBigInt(result.MatchedAmount)
 	cloned.FallbackAmount = cloneBigInt(result.FallbackAmount)
+
+	return cloned
+}
+
+func cloneResults(results []model.IntentResult) []model.IntentResult {
+	cloned := make([]model.IntentResult, len(results))
+	for idx, result := range results {
+		cloned[idx] = cloneResult(result)
+	}
 
 	return cloned
 }

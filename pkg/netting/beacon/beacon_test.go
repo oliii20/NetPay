@@ -143,6 +143,32 @@ func TestValidatorUsesProposalMatcherMode(t *testing.T) {
 	require.NoError(t, beacon.NewValidator(store).Validate(proposal))
 }
 
+func TestValidatorUsesProposalSettlementChunkSize(t *testing.T) {
+	store, err := beacon.OpenStore(filepath.Join(t.TempDir(), "beacon.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	first := beaconPayment(0, 1, 10, 1)
+	second := beaconPayment(1, 0, 10, 2)
+	third := beaconPayment(0, 1, 10, 3)
+	fourth := beaconPayment(1, 0, 10, 4)
+	frozen := window.FrozenWindow{
+		WindowID: 1,
+		Cuts: []model.ShardCut{
+			{ShardID: 0, EndHeight: 1, EndBlockHash: beaconHash(0x11)},
+			{ShardID: 1, EndHeight: 1, EndBlockHash: beaconHash(0x21)},
+		},
+		Receipts: []model.FinalizedBlockReceipt{
+			{ShardID: 0, Height: 1, ParentHash: beaconHash(0x10), BlockHash: beaconHash(0x11), Epoch: 1, Intents: []intent.PaymentIntent{first, third}},
+			{ShardID: 1, Height: 1, ParentHash: beaconHash(0x20), BlockHash: beaconHash(0x21), Epoch: 1, Intents: []intent.PaymentIntent{second, fourth}},
+		},
+		Intents: []intent.PaymentIntent{first, second, third, fourth},
+	}
+	proposal, err := (batch.Builder{SettlementChunkSize: 2}).Build(frozen, merkle.Hash{})
+	require.NoError(t, err)
+	require.Equal(t, uint32(2), proposal.Header.SettlementChunkSize)
+	require.NoError(t, beacon.NewValidator(store).Validate(proposal))
+}
+
 func proposal(
 	t *testing.T,
 	windowID uint64,

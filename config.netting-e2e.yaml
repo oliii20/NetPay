@@ -33,6 +33,7 @@ netting:
   enabled: true
   metrics_enabled: true
   batch_size: 0
+  settlement_chunk_size: 0
   max_window_duration_ms: 2000
   solver_tick_interval_ms: 100
   matcher_mode: "full"

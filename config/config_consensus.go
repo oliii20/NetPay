@@ -40,6 +40,7 @@ type NettingCfg struct {
 	Enabled              bool   `json:"enabled"                yaml:"enabled"`
 	MetricsEnabled       bool   `json:"metrics_enabled"        yaml:"metrics_enabled"`
 	BatchSize            int    `json:"batch_size"             yaml:"batch_size"`
+	SettlementChunkSize  int    `json:"settlement_chunk_size"  yaml:"settlement_chunk_size"`
 	MaxWindowDurationMS  int64  `json:"max_window_duration_ms" yaml:"max_window_duration_ms"`
 	SolverTickIntervalMS int64  `json:"solver_tick_interval_ms" yaml:"solver_tick_interval_ms"`
 	MatcherMode          string `json:"matcher_mode"           yaml:"matcher_mode"`

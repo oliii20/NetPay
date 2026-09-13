@@ -13,6 +13,7 @@ type MatchRootBlockBody struct {
 	PreviousBatchID     merkle.Hash
 	WindowID            uint64
 	MatcherMode         string
+	SettlementChunkSize uint32
 	CutRoot             merkle.Hash
 	IntentResultRoot    merkle.Hash
 	ShardSettlementRoot merkle.Hash

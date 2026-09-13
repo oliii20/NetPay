@@ -77,7 +77,8 @@ func (v *Validator) Validate(proposal model.BatchProposal) error {
 	}
 
 	expected, err := (batch.Builder{
-		MatcherMode: matcher.Mode(proposal.Header.MatcherMode),
+		MatcherMode:         matcher.Mode(proposal.Header.MatcherMode),
+		SettlementChunkSize: int(proposal.Header.SettlementChunkSize),
 	}).Build(window.FrozenWindow{
 		WindowID: proposal.Header.WindowID,
 		Cuts:     append([]model.ShardCut(nil), proposal.Header.Cuts...),
@@ -104,7 +105,8 @@ func equalShardSettlements(expected, actual []model.ShardSettlement) bool {
 		left, right := expected[idx], actual[idx]
 		if left.BatchID != right.BatchID || left.WindowID != right.WindowID || left.ShardID != right.ShardID ||
 			left.ChunkIndex != right.ChunkIndex || left.ChunkCount != right.ChunkCount ||
-			!equalIntentResults(left.Outgoing, right.Outgoing) || !equalIntentResults(left.Incoming, right.Incoming) {
+			!equalIntentResults(left.Outgoing, right.Outgoing) || !equalIntentResults(left.Incoming, right.Incoming) ||
+			!equalIntentResults(left.FallbackIncoming, right.FallbackIncoming) {
 			return false
 		}
 	}

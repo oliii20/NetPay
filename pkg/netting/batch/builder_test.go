@@ -97,6 +97,45 @@ func TestBuilderRejectsEmptyWindowAndMissingShard(t *testing.T) {
 	require.ErrorIs(t, err, batch.ErrMissingShardCut)
 }
 
+func TestBuilderSplitsSettlementChunks(t *testing.T) {
+	t.Parallel()
+
+	intents := make([]intent.PaymentIntent, 0)
+	for idx := int64(0); idx < 4; idx++ {
+		intents = append(intents, payment(0, 1, 10, idx*2+1))
+		intents = append(intents, payment(1, 0, 10, idx*2+2))
+	}
+	frozen := window.FrozenWindow{
+		WindowID: 9,
+		OpenedAt: time.Unix(1, 0),
+		SealedAt: time.Unix(2, 0),
+		Cuts: []model.ShardCut{
+			{ShardID: 0, PreviousHeight: 1, EndHeight: 2, EndBlockHash: hash(0x31)},
+			{ShardID: 1, PreviousHeight: 1, EndHeight: 2, EndBlockHash: hash(0x32)},
+		},
+		Intents: intents,
+	}
+
+	proposal, err := (batch.Builder{SettlementChunkSize: 2}).Build(frozen, merkle.Hash{})
+	require.NoError(t, err)
+	require.Equal(t, uint32(2), proposal.Header.SettlementChunkSize)
+	require.Len(t, proposal.Sidecar.ShardSettlements, 8)
+	for _, settlement := range proposal.Sidecar.ShardSettlements {
+		require.Equal(t, uint32(4), settlement.ChunkCount)
+		require.LessOrEqual(
+			t,
+			len(settlement.Outgoing)+len(settlement.Incoming)+len(settlement.FallbackIncoming),
+			2,
+		)
+	}
+	packages, err := batch.BuildSettlementPackages(proposal)
+	require.NoError(t, err)
+	require.Len(t, packages, 8)
+	for _, pack := range packages {
+		require.NoError(t, batch.VerifySettlementPackage(pack))
+	}
+}
+
 func payment(source, destination, amount, nonce int64) intent.PaymentIntent {
 	var sender, recipient account.Address
 	sender[0] = byte(source + 1)

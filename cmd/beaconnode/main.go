@@ -33,6 +33,9 @@ func main() {
 	if err != nil {
 		log.Fatal(fmt.Errorf("load config: %w", err))
 	}
+	if interval, ok := cfg.ConsensusNodeCfg.ShardBlockIntervalsMS[lp.ShardID]; ok && interval > 0 {
+		cfg.ConsensusNodeCfg.BlockInterval = interval
+	}
 	if err = logger.InitLogger(lp, cfg.LogCfg); err != nil {
 		log.Fatal(fmt.Errorf("init logger: %w", err))
 	}

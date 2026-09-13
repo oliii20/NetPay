@@ -20,7 +20,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
@@ -61,8 +61,10 @@ class RunSpec:
     node_num: int = 4
     block_limit: int = BLOCK_SIZE_LIMIT
     batch_size: int = 0
+    settlement_chunk_size: int = 0
     max_window_ms: int = DEFAULT_MAX_WINDOW_MS
     block_interval_ms: int = 500
+    beacon_block_interval_ms: int = 0
     network_latency_ms: int = 0
     balance_ratio: float = 1.0
     shard_block_intervals_ms: dict[int, int] = field(default_factory=dict)
@@ -92,6 +94,9 @@ def main() -> int:
     parser.add_argument("--tx-number", type=positive_int, help="override profile tx_number")
     parser.add_argument("--tx-speed", type=positive_int, help="override profile tx_injection_speed")
     parser.add_argument("--block-limit", type=positive_int, help="override system block transaction limit")
+    parser.add_argument("--block-interval-ms", type=positive_int, help="override consensus block interval in ms")
+    parser.add_argument("--beacon-block-interval-ms", type=positive_int, help="override Beacon block interval in ms")
+    parser.add_argument("--settlement-chunk-size", type=positive_int, help="max intent records per settlement chunk")
     parser.add_argument("--max-window-ms", type=positive_int, help="override netting max_window_duration_ms")
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
     parser.add_argument("--skip-build", action="store_true")
@@ -117,6 +122,9 @@ def main() -> int:
         args.tx_number,
         args.tx_speed,
         args.block_limit,
+        args.block_interval_ms,
+        args.beacon_block_interval_ms,
+        args.settlement_chunk_size,
         args.max_window_ms,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -200,6 +208,9 @@ def build_specs(
     tx_number_override: Optional[int] = None,
     tx_speed_override: Optional[int] = None,
     block_limit_override: Optional[int] = None,
+    block_interval_ms_override: Optional[int] = None,
+    beacon_block_interval_ms_override: Optional[int] = None,
+    settlement_chunk_size_override: Optional[int] = None,
     max_window_ms_override: Optional[int] = None,
 ) -> list[RunSpec]:
     block_limit = block_limit_override or BLOCK_SIZE_LIMIT
@@ -222,7 +233,7 @@ def build_specs(
         tx_number, tx_speed = 50000, 2000
         balance_points = [0.0, 0.25, 0.5, 0.75, 1.0]
         batch_points = batch_size_points(4, block_limit)
-        window_points = [default_max_window_ms] if max_window_ms_override else [500, 1000, 2000, 3000, 5000]
+        window_points = [default_max_window_ms] if max_window_ms_override else [500, 1000, 1500, 2000, 2500, 3000, 3500]
         scale_points = [4, 8, 16]
         latency_points = [0, 25, 50, 100, 200]
 
@@ -382,6 +393,12 @@ def build_specs(
                         seed=seed,
                     )
                 )
+    if block_interval_ms_override is not None:
+        specs = [replace(spec, block_interval_ms=block_interval_ms_override) for spec in specs]
+    if beacon_block_interval_ms_override is not None:
+        specs = [replace(spec, beacon_block_interval_ms=beacon_block_interval_ms_override) for spec in specs]
+    if settlement_chunk_size_override is not None:
+        specs = [replace(spec, settlement_chunk_size=settlement_chunk_size_override) for spec in specs]
     return specs
 
 
@@ -863,6 +880,10 @@ def write_config(path: Path, run_dir: Path, workload_path: Path, spec: RunSpec) 
         for shard, interval in sorted(spec.shard_block_intervals_ms.items()):
             if shard < spec.shard_num:
                 intervals += f"    {shard}: {interval}\n"
+    if spec.beacon_block_interval_ms > 0:
+        if not intervals:
+            intervals = "  shard_block_intervals_ms:\n"
+        intervals += f"    {BEACON_SHARD_ID}: {spec.beacon_block_interval_ms}\n"
     content = f"""system:
   shard_num: {spec.shard_num}
   node_num: {spec.node_num}
@@ -898,6 +919,7 @@ netting:
   enabled: {str(spec.netting_enabled).lower()}
   metrics_enabled: true
   batch_size: {spec.batch_size}
+  settlement_chunk_size: {spec.settlement_chunk_size}
   max_window_duration_ms: {spec.max_window_ms}
   solver_tick_interval_ms: 100
   matcher_mode: "{spec.matcher_mode}"
@@ -961,7 +983,10 @@ def summarize_run(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[str, o
         "node_num": spec.node_num,
         "tx_number": spec.tx_number,
         "block_limit": spec.block_limit,
+        "block_interval_ms": spec.block_interval_ms,
+        "beacon_block_interval_ms": spec.beacon_block_interval_ms,
         "batch_size": spec.batch_size,
+        "settlement_chunk_size": spec.settlement_chunk_size,
         "max_window_ms": spec.max_window_ms,
         "matcher_mode": spec.matcher_mode,
         "network_latency_ms": spec.network_latency_ms,
@@ -1237,8 +1262,9 @@ def parse_timestamp(value: str) -> float:
 
 SUMMARY_FIELDS = [
     "run_id", "experiment", "variable", "value", "method", "seed", "shard_num", "node_num",
-    "tx_number", "block_limit", "batch_size", "max_window_ms", "matcher_mode", "network_latency_ms",
-    "elapsed_s", "tx_committed", "throughput_tps", "avg_latency_s", "p50_latency_s",
+    "tx_number", "block_limit", "block_interval_ms", "beacon_block_interval_ms", "batch_size",
+    "settlement_chunk_size", "max_window_ms", "matcher_mode", "network_latency_ms", "elapsed_s",
+    "tx_committed", "throughput_tps", "avg_latency_s", "p50_latency_s",
     "p95_latency_s", "matched_value_ratio", "fallback_value_ratio", "matched_intent_ratio",
     "fallback_intent_ratio", "split_allocations", "match_time_ms", "proof_time_ms",
     "beacon_bytes_per_intent", "cross_messages_per_tx", "capital_lock_s", "watermark_skew",

@@ -33,12 +33,13 @@ var (
 )
 
 type Config struct {
-	ShardCount        int64
-	BatchSize         int
-	MaxWindowDuration time.Duration
-	TickInterval      time.Duration
-	MetricsEnabled    bool
-	MatcherMode       matcher.Mode
+	ShardCount          int64
+	BatchSize           int
+	MaxWindowDuration   time.Duration
+	TickInterval        time.Duration
+	MetricsEnabled      bool
+	MatcherMode         matcher.Mode
+	SettlementChunkSize int
 }
 
 type Node struct {
@@ -75,8 +76,10 @@ func New(
 		store:      store,
 		bootstrap:  make(map[int64][]model.FinalizedBlockReceipt),
 		dispatched: make(map[merkle.Hash]struct{}),
-		builder:    batch.Builder{MatcherMode: cfg.MatcherMode},
-		metrics:    metrics.NewPublisher(cfg.MetricsEnabled, 0, conn, resolver),
+		builder: batch.Builder{
+			MatcherMode: cfg.MatcherMode, SettlementChunkSize: cfg.SettlementChunkSize,
+		},
+		metrics: metrics.NewPublisher(cfg.MetricsEnabled, 0, conn, resolver),
 	}
 	state, found, err := store.LoadState()
 	if err != nil {
