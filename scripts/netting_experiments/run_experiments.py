@@ -2,7 +2,7 @@
 """Run the seven netting experiments and aggregate their metrics.
 
 The runner is intentionally dependency-free: it uses the standard library to
-derive workloads from selectedTxs_300K.csv, generate BlockEmulator-X configs,
+derive workloads from the configured CSV dataset, generate BlockEmulator-X configs,
 launch local processes, and summarize CSV metrics. Plotting is handled by
 plot_experiments.py.
 """
@@ -27,7 +27,8 @@ from typing import Iterable, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATASET = Path("data/selectedTxs_300K.csv")
+DEFAULT_DATASET = Path("data/25250000to25499999_BlockTransaction.csv")
+DEFAULT_OUT_ROOT = Path(".exp/netting-paper")
 BEACON_SHARD_ID = 2147483646
 SOLVER_SHARD_ID = 2147483645
 SUPERVISOR_SHARD_ID = 2147483647
@@ -89,7 +90,14 @@ def main() -> int:
     parser.add_argument("--profile", choices=["smoke", "pilot", "full"], default="pilot")
     parser.add_argument("--experiments", default="all", help="comma list from exp1..exp7 or all")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
-    parser.add_argument("--out", type=Path, default=Path(".exp/netting-paper"))
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_OUT_ROOT,
+        help="output root; each run creates a timestamped session unless --overwrite is set",
+    )
+    parser.add_argument("--session-name", default="", help="optional name for this experiment session")
+    parser.add_argument("--overwrite", action="store_true", help="reuse --out directly and replace colliding run outputs")
     parser.add_argument("--seeds", default="", help="override seeds, e.g. 1,2,3")
     parser.add_argument("--tx-number", type=positive_int, help="override profile tx_number")
     parser.add_argument("--tx-speed", type=positive_int, help="override profile tx_injection_speed")
@@ -111,7 +119,8 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = REPO_ROOT
-    out_dir = repo_path(args.out, repo)
+    out_root = repo_path(args.out, repo)
+    out_dir = resolve_output_dir(out_root, args.session_name, args.overwrite)
     dataset_path = repo_path(args.dataset, repo)
     selected = selected_experiments(args.experiments)
     seeds = parse_seeds(args.seeds) or default_seeds(args.profile)
@@ -127,21 +136,24 @@ def main() -> int:
         args.settlement_chunk_size,
         args.max_window_ms,
     )
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     if args.dry_run:
         for spec in specs:
             print(spec.run_id)
         return 0
 
-    dataset_rows = load_dataset(dataset_path)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if not args.overwrite:
+        print(f"session: {out_dir}")
+
+    dataset_tx_number = max((spec.tx_number for spec in specs if spec.workload == "dataset"), default=0)
+    dataset_rows = load_dataset(dataset_path, dataset_tx_number) if dataset_tx_number > 0 else []
     if not args.skip_build:
         build_binaries(repo, out_dir / "bin", args.go)
 
     summary_path = out_dir / "summary.csv"
     runs_path = out_dir / "runs.jsonl"
     write_summary_header(summary_path)
-    with runs_path.open("a", encoding="utf-8") as runs_fp:
+    with runs_path.open("w", encoding="utf-8") as runs_fp:
         for idx, spec in enumerate(specs):
             run_dir = out_dir / "runs" / spec.run_id
             base_port = 24000 + (idx % 40) * 900
@@ -155,14 +167,55 @@ def main() -> int:
                 base_port,
                 args.timeout,
                 args.progress_interval,
+                args.overwrite,
             )
             append_summary(summary_path, result)
             runs_fp.write(json.dumps(result, sort_keys=True) + "\n")
             runs_fp.flush()
 
+    if not args.overwrite:
+        update_latest_pointer(out_root, out_dir)
+        print(f"latest: {out_root / 'latest'}")
     print(f"summary: {summary_path}")
     print(f"runs: {runs_path}")
     return 0
+
+
+def resolve_output_dir(out_root: Path, session_name: str, overwrite: bool) -> Path:
+    if overwrite:
+        return out_root
+
+    label = sanitize_session_name(session_name) if session_name else datetime.now().strftime("%Y%m%d-%H%M%S")
+    session_root = out_root / "sessions"
+    candidate = session_root / label
+    if not candidate.exists():
+        return candidate
+
+    for idx in range(2, 1000):
+        suffixed = session_root / f"{label}-{idx:02d}"
+        if not suffixed.exists():
+            return suffixed
+    raise SystemExit(f"could not allocate a unique output session under {session_root}")
+
+
+def sanitize_session_name(raw: str) -> str:
+    name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in raw.strip())
+    return name.strip("._-") or datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def update_latest_pointer(out_root: Path, out_dir: Path) -> None:
+    out_root.mkdir(parents=True, exist_ok=True)
+    latest = out_root / "latest"
+    latest_txt = out_root / "latest.txt"
+    if latest.is_symlink() or latest.is_file():
+        latest.unlink()
+    elif latest.exists():
+        latest_txt.write_text(str(out_dir.resolve()) + "\n", encoding="utf-8")
+        return
+    try:
+        latest.symlink_to(out_dir.resolve(), target_is_directory=True)
+    except OSError:
+        latest_txt.write_text(str(out_dir.resolve()) + "\n", encoding="utf-8")
 
 
 def repo_path(path: Path, repo: Path) -> Path:
@@ -233,7 +286,7 @@ def build_specs(
         tx_number, tx_speed = 50000, 2000
         balance_points = [0.0, 0.25, 0.5, 0.75, 1.0]
         batch_points = batch_size_points(4, block_limit)
-        window_points = [default_max_window_ms] if max_window_ms_override else [500, 1000, 1500, 2000, 2500, 3000, 3500]
+        window_points = [default_max_window_ms] if max_window_ms_override else [1000, 1500, 2000, 2500, 3000, 3500]
         scale_points = [4, 8, 16]
         latency_points = [0, 25, 50, 100, 200]
 
@@ -332,12 +385,11 @@ def build_specs(
                         "exp4_window_duration",
                         "max_window_ms",
                         str(window_ms),
-                        workload="balance",
+                        workload="dataset",
                         block_limit=block_limit,
                         tx_number=tx_number,
                         tx_speed=tx_speed,
                         max_window_ms=window_ms,
-                        balance_ratio=0.75,
                         seed=seed,
                     )
                 )
@@ -402,11 +454,11 @@ def build_specs(
     return specs
 
 
-def load_dataset(path: Path) -> list[list[str]]:
+def load_dataset(path: Path, max_rows: int | None = None) -> list[list[str]]:
     if not path.exists():
         raise SystemExit(
             f"dataset not found: {path}\n"
-            "Place selectedTxs_300K.csv under data/selectedTxs_300K.csv, "
+            f"Place {DEFAULT_DATASET} under the repository root, "
             "or pass --dataset with your local dataset path."
         )
     rows: list[list[str]] = []
@@ -415,8 +467,12 @@ def load_dataset(path: Path) -> list[list[str]]:
         for line in reader:
             if valid_tx_line(line):
                 rows.append(line[:17] + [""] * max(0, 17 - len(line)))
+                if max_rows is not None and len(rows) >= max_rows:
+                    break
     if not rows:
         raise SystemExit(f"dataset has no usable transfer rows: {path}")
+    if max_rows is not None and len(rows) < max_rows:
+        raise SystemExit(f"dataset has only {len(rows)} usable transfer rows; need {max_rows}: {path}")
     return rows
 
 
@@ -599,8 +655,11 @@ def run_one(
     base_port: int,
     timeout_s: int,
     progress_interval_s: int,
+    overwrite: bool,
 ) -> dict[str, object]:
     if run_dir.exists():
+        if not overwrite:
+            raise RuntimeError(f"run output already exists: {run_dir}")
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True)
     workload_path = run_dir / "workload.csv"
@@ -934,7 +993,7 @@ supervisor:
   tx_source:
     tx_source_type: "csv_source"
     tx_source_file: "{workload_path}"
-    exclude_contract_txs: true
+    exclude_contract_txs: false
   broker_module:
     broker_file_path: "./pkg/broker/broker"
     broker_num: 50
@@ -1002,22 +1061,26 @@ def summarize_run(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[str, o
 
 
 def summarize_netting(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[str, object]:
+    legacy_brief = read_dicts(run_dir / "results" / "relay_stats_brief_info.csv")
+    legacy_detail = read_dicts(run_dir / "results" / "relay_stats_detail_tx_info.csv")
     batches = read_dicts(run_dir / "results" / "netting_batch_metrics.csv")
     intents = read_dicts(run_dir / "results" / "netting_intent_metrics.csv")
     completed = [row for row in intents if float_or_zero(row.get("EndToEndLatencyNs")) > 0]
+    inner_completed = [
+        row
+        for row in legacy_detail
+        if row.get("Is cross-shard tx or not") != "true" and row.get("Tx finally commit time")
+    ]
     batch_count = len(batches)
-    intent_count = len(intents)
-    e2e = [float_or_zero(row.get("EndToEndLatencyNs")) / 1e9 for row in completed]
+    inner_e2e = [
+        parse_duration_from_times(row.get("Tx create time", ""), row.get("Tx finally commit time", ""))
+        for row in inner_completed
+    ]
+    e2e = [float_or_zero(row.get("EndToEndLatencyNs")) / 1e9 for row in completed] + inner_e2e
     capital = [float_or_zero(row.get("CapitalLockDurationNs")) / 1e9 for row in completed]
-    starts = [parse_timestamp(row.get("CreatedAt", "")) for row in completed]
-    ends = [parse_timestamp(row.get("CompletedAt", "")) for row in completed]
-    pairs = [(start, end) for start, end in zip(starts, ends) if start > 0 and end > 0]
-    if pairs:
-        duration = max(end for _, end in pairs) - min(start for start, _ in pairs)
-    else:
-        duration = elapsed_s
-    duration = max(1e-9, duration)
-    throughput = len(completed) / duration
+    original_tx_count = len(completed) + len(inner_completed)
+    tps_duration = netting_throughput_duration(legacy_brief, completed, inner_completed, elapsed_s)
+    throughput = original_tx_count / tps_duration
     beacon_bytes = [
         float_or_zero(row.get("PreprepareBytes"))
         + float_or_zero(row.get("PrepareBytes"))
@@ -1026,7 +1089,12 @@ def summarize_netting(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[st
     ]
     intent_total = sum(float_or_zero(row.get("IntentCount")) for row in batches)
     return {
-        "tx_committed": len(completed),
+        "tx_committed": original_tx_count,
+        "tps_tx_count": original_tx_count,
+        "tps_duration_s": tps_duration,
+        "latency_tx_count": len(e2e),
+        "latency_sum_s": sum(e2e),
+        "stage_latency_tx_count": len(completed),
         "throughput_tps": throughput,
         "avg_latency_s": mean(e2e),
         "p50_latency_s": percentile(e2e, 50),
@@ -1039,12 +1107,35 @@ def summarize_netting(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[st
         "match_time_ms": mean([float_or_zero(row.get("MatchTimeNs")) / 1e6 for row in batches]),
         "proof_time_ms": mean([float_or_zero(row.get("ProofVerificationTimeNs")) / 1e6 for row in batches]),
         "beacon_bytes_per_intent": sum(beacon_bytes) / max(1.0, intent_total),
-        "cross_messages_per_tx": (batch_count + spec.shard_num * batch_count) / max(1.0, intent_count),
+        "cross_messages_per_tx": (batch_count + spec.shard_num * batch_count) / max(1.0, original_tx_count),
         "capital_lock_s": mean(capital),
         "watermark_skew": mean([float_or_zero(row.get("WatermarkSkew")) for row in batches]),
         "batch_count": batch_count,
         **netting_stage_latencies(batches, intents),
     }
+
+
+def netting_throughput_duration(
+    legacy_brief: list[dict[str, str]],
+    completed_intents: list[dict[str, str]],
+    inner_completed: list[dict[str, str]],
+    elapsed_s: float,
+) -> float:
+    starts = [parse_timestamp(row.get("Epoch start time", "")) for row in legacy_brief]
+    ends = [parse_timestamp(row.get("Epoch end time", "")) for row in legacy_brief]
+    pairs = [(start, end) for start, end in zip(starts, ends) if start > 0 and end > 0]
+    if pairs:
+        return max(1e-9, max(end for _, end in pairs) - min(start for start, _ in pairs))
+
+    starts = [parse_timestamp(row.get("CreatedAt", "")) for row in completed_intents]
+    ends = [parse_timestamp(row.get("CompletedAt", "")) for row in completed_intents]
+    starts.extend(parse_timestamp(row.get("Tx create time", "")) for row in inner_completed)
+    ends.extend(parse_timestamp(row.get("Tx finally commit time", "")) for row in inner_completed)
+    pairs = [(start, end) for start, end in zip(starts, ends) if start > 0 and end > 0]
+    if pairs:
+        return max(1e-9, max(end for _, end in pairs) - min(start for start, _ in pairs))
+
+    return max(1e-9, elapsed_s)
 
 
 def summarize_relay(run_dir: Path, spec: RunSpec) -> dict[str, object]:
@@ -1056,9 +1147,15 @@ def summarize_relay(run_dir: Path, spec: RunSpec) -> dict[str, object]:
         if row.get("Tx finally commit time")
     ]
     cross_count = sum(1 for row in detail if row.get("Is cross-shard tx or not") == "true")
+    tps_tx_count, tps_duration, throughput = baseline_throughput_parts(brief, len(detail))
     return {
         "tx_committed": len(detail),
-        "throughput_tps": mean([float_or_zero(row.get("Avg. TPS of this epoch (txs per second)")) for row in brief]),
+        "tps_tx_count": tps_tx_count,
+        "tps_duration_s": tps_duration,
+        "latency_tx_count": len(e2e),
+        "latency_sum_s": sum(e2e),
+        "stage_latency_tx_count": relay_stage_latency_count(detail),
+        "throughput_tps": throughput,
         "avg_latency_s": mean([x for x in e2e if x > 0]),
         "p50_latency_s": percentile(e2e, 50),
         "p95_latency_s": percentile(e2e, 95),
@@ -1088,9 +1185,15 @@ def summarize_broker(run_dir: Path, spec: RunSpec) -> dict[str, object]:
     ]
     broker_count = sum(1 for row in detail if row.get("Mechanism") == "Broker")
     fallback_count = sum(1 for row in detail if row.get("Mechanism") == "FallbackToRelay")
+    tps_tx_count, tps_duration, throughput = baseline_throughput_parts(brief, len(detail))
     return {
         "tx_committed": len(detail),
-        "throughput_tps": mean([float_or_zero(row.get("Avg. TPS of this epoch (txs per second)")) for row in brief]),
+        "tps_tx_count": tps_tx_count,
+        "tps_duration_s": tps_duration,
+        "latency_tx_count": len(e2e),
+        "latency_sum_s": sum(e2e),
+        "stage_latency_tx_count": broker_stage_latency_count(detail),
+        "throughput_tps": throughput,
         "avg_latency_s": mean([x for x in e2e if x > 0]),
         "p50_latency_s": percentile(e2e, 50),
         "p95_latency_s": percentile(e2e, 95),
@@ -1110,10 +1213,30 @@ def summarize_broker(run_dir: Path, spec: RunSpec) -> dict[str, object]:
     }
 
 
+def baseline_throughput_parts(brief: list[dict[str, str]], fallback_tx_count: int) -> tuple[float, float, float]:
+    tx_count = sum(float_or_zero(row.get("Total tx # in this epoch")) for row in brief)
+    if tx_count <= 0:
+        tx_count = float(fallback_tx_count)
+    throughput = mean(float_or_zero(row.get("Avg. TPS of this epoch (txs per second)")) for row in brief)
+    if throughput > 0:
+        return tx_count, tx_count / throughput, throughput
+
+    starts = [parse_timestamp(row.get("Epoch start time", "")) for row in brief]
+    ends = [parse_timestamp(row.get("Epoch end time", "")) for row in brief]
+    pairs = [(start, end) for start, end in zip(starts, ends) if start > 0 and end > 0]
+    duration = max(end for _, end in pairs) - min(start for start, _ in pairs) if pairs else 1e-9
+    duration = max(1e-9, duration)
+
+    return tx_count, duration, tx_count / duration
+
+
 def empty_stage_latencies() -> dict[str, float]:
     return {
         "stage_source_s": 0.0,
         "stage_second_hop_s": 0.0,
+        "stage_coordination_s": 0.0,
+        "stage_transfer_s": 0.0,
+        "stage_target_s": 0.0,
         "stage_window_s": 0.0,
         "stage_match_s": 0.0,
         "stage_beacon_s": 0.0,
@@ -1125,81 +1248,119 @@ def empty_stage_latencies() -> dict[str, float]:
 def netting_stage_latencies(batches: list[dict[str, str]], intents: list[dict[str, str]]) -> dict[str, float]:
     completed = [row for row in intents if float_or_zero(row.get("EndToEndLatencyNs")) > 0]
     completed_count = max(1, len(completed))
-    reservation_s = mean(float_or_zero(row.get("ReservationLatencyNs")) / 1e9 for row in completed)
-    window_s = mean(float_or_zero(row.get("WindowOpenDurationNs")) / 1e9 for row in batches)
-    match_s = mean(float_or_zero(row.get("MatchTimeNs")) / 1e9 for row in batches)
-    beacon_s = mean(float_or_zero(row.get("BeaconConsensusLatencyNs")) / 1e9 for row in batches)
-    settlement_total_s = mean(float_or_zero(row.get("SettlementLatencyNs")) / 1e9 for row in completed)
-    fallback_s = sum(
-        parse_duration_from_times(row.get("SettledAt", ""), row.get("CompletedAt", ""))
-        for row in completed
-        if row.get("UsedFallback") == "true"
-    ) / completed_count
     stages = empty_stage_latencies()
-    stages.update(
-        {
-            "stage_source_s": reservation_s,
-            "stage_window_s": window_s,
-            "stage_match_s": match_s,
-            "stage_beacon_s": beacon_s,
-            "stage_settlement_s": max(0.0, settlement_total_s - window_s - match_s - beacon_s),
-            "stage_fallback_s": fallback_s,
-        }
-    )
+    batch_by_id = {row.get("BatchID", ""): row for row in batches}
+    for row in completed:
+        batch = batch_by_id.get(row.get("BatchID", ""))
+        window_s = float_or_zero(batch.get("WindowOpenDurationNs") if batch else 0) / 1e9
+        match_s = float_or_zero(batch.get("MatchTimeNs") if batch else 0) / 1e9
+        beacon_s = float_or_zero(batch.get("BeaconConsensusLatencyNs") if batch else 0) / 1e9
+        settlement_total_s = float_or_zero(row.get("SettlementLatencyNs")) / 1e9
+        capital_lock_s = float_or_zero(row.get("CapitalLockDurationNs")) / 1e9
+        post_source_s = capital_lock_s if capital_lock_s > 0 else settlement_total_s
+        stages["stage_source_s"] += float_or_zero(row.get("ReservationLatencyNs")) / 1e9
+        stages["stage_window_s"] += window_s
+        stages["stage_match_s"] += match_s
+        stages["stage_beacon_s"] += beacon_s
+        if row.get("UsedFallback") == "true":
+            fallback_s = float_or_zero(row.get("FallbackLatencyNs")) / 1e9
+            if fallback_s <= 0:
+                fallback_s = max(0.0, post_source_s - window_s - match_s - beacon_s)
+            stages["stage_fallback_s"] += fallback_s
+        else:
+            stages["stage_settlement_s"] += max(0.0, settlement_total_s - window_s - match_s - beacon_s)
+
+    for key in stages:
+        stages[key] /= completed_count
     return stages
 
 
 def relay_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     stages = empty_stage_latencies()
-    total = max(1, len(detail))
-    for row in detail:
-        if (
-            row.get("Is cross-shard tx or not") == "true"
-            and row.get("Relay1 tx commit time")
-            and row.get("Relay2 tx commit time")
-        ):
-            stages["stage_source_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Relay1 tx commit time", "")
-            )
-            stages["stage_second_hop_s"] += parse_duration_from_times(
-                row.get("Relay1 tx commit time", ""), row.get("Relay2 tx commit time", "")
-            )
-        elif row.get("Tx finally commit time"):
-            stages["stage_source_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
-            )
-    stages["stage_source_s"] /= total
-    stages["stage_second_hop_s"] /= total
+    cross = [
+        row
+        for row in detail
+        if row.get("Is cross-shard tx or not") == "true"
+        and row.get("Relay1 tx commit time")
+        and row.get("Relay2 tx commit time")
+    ]
+    total = max(1, len(cross))
+    for row in cross:
+        source_s = parse_duration_from_times(row.get("Tx create time", ""), row.get("Relay1 tx commit time", ""))
+        relay2_create_time = row.get("Relay2 tx create time") or row.get("Relay2 block propose time", "")
+        transfer_s = parse_duration_from_times(
+            row.get("Relay1 tx commit time", ""), relay2_create_time
+        )
+        target_s = parse_duration_from_times(
+            relay2_create_time, row.get("Relay2 tx commit time", "")
+        )
+        stages["stage_source_s"] += source_s
+        stages["stage_second_hop_s"] += transfer_s + target_s
+        stages["stage_transfer_s"] += transfer_s
+        stages["stage_target_s"] += target_s
+    for key in stages:
+        stages[key] /= total
     return stages
+
+
+def relay_stage_latency_count(detail: list[dict[str, str]]) -> int:
+    return sum(
+        1
+        for row in detail
+        if row.get("Is cross-shard tx or not") == "true"
+        and row.get("Relay1 tx commit time")
+        and row.get("Relay2 tx commit time")
+    )
 
 
 def broker_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     stages = empty_stage_latencies()
-    total = max(1, len(detail))
-    for row in detail:
-        if (
-            row.get("Mechanism") == "Broker"
-            and row.get("Broker1 tx commit time")
-            and row.get("Broker2 tx commit time")
-        ):
-            stages["stage_source_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Broker1 tx commit time", "")
-            )
-            stages["stage_second_hop_s"] += parse_duration_from_times(
-                row.get("Broker1 tx commit time", ""), row.get("Broker2 tx commit time", "")
-            )
-        elif row.get("Mechanism") == "FallbackToRelay" and row.get("Tx finally commit time"):
-            stages["stage_fallback_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
-            )
-        elif row.get("Tx finally commit time"):
-            stages["stage_source_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
-            )
-    stages["stage_source_s"] /= total
-    stages["stage_second_hop_s"] /= total
-    stages["stage_fallback_s"] /= total
+    cross = [
+        row
+        for row in detail
+        if row.get("Mechanism") == "Broker"
+        and row.get("Broker1 tx commit time")
+        and row.get("Broker2 tx commit time")
+    ]
+    fallback = [
+        row
+        for row in detail
+        if row.get("Mechanism") == "FallbackToRelay" and row.get("Tx finally commit time")
+    ]
+    total = max(1, len(cross) + len(fallback))
+    for row in cross:
+        source_s = parse_duration_from_times(row.get("Tx create time", ""), row.get("Broker1 tx commit time", ""))
+        coordination_s = parse_duration_from_times(
+            row.get("Broker1 tx commit time", ""), row.get("Broker2 tx create time", "")
+        )
+        target_s = parse_duration_from_times(
+            row.get("Broker2 tx create time", ""), row.get("Broker2 tx commit time", "")
+        )
+        stages["stage_source_s"] += source_s
+        stages["stage_second_hop_s"] += coordination_s + target_s
+        stages["stage_coordination_s"] += coordination_s
+        stages["stage_target_s"] += target_s
+    for row in fallback:
+        stages["stage_fallback_s"] += parse_duration_from_times(
+            row.get("Tx create time", ""), row.get("Tx finally commit time", "")
+        )
+    for key in stages:
+        stages[key] /= total
     return stages
+
+
+def broker_stage_latency_count(detail: list[dict[str, str]]) -> int:
+    return sum(
+        1
+        for row in detail
+        if row.get("Mechanism") == "Broker"
+        and row.get("Broker1 tx commit time")
+        and row.get("Broker2 tx commit time")
+    ) + sum(
+        1
+        for row in detail
+        if row.get("Mechanism") == "FallbackToRelay" and row.get("Tx finally commit time")
+    )
 
 
 def read_dicts(path: Path) -> list[dict[str, str]]:
@@ -1264,11 +1425,13 @@ SUMMARY_FIELDS = [
     "run_id", "experiment", "variable", "value", "method", "seed", "shard_num", "node_num",
     "tx_number", "block_limit", "block_interval_ms", "beacon_block_interval_ms", "batch_size",
     "settlement_chunk_size", "max_window_ms", "matcher_mode", "network_latency_ms", "elapsed_s",
-    "tx_committed", "throughput_tps", "avg_latency_s", "p50_latency_s",
+    "tx_committed", "tps_tx_count", "tps_duration_s", "latency_tx_count", "latency_sum_s",
+    "stage_latency_tx_count", "throughput_tps", "avg_latency_s", "p50_latency_s",
     "p95_latency_s", "matched_value_ratio", "fallback_value_ratio", "matched_intent_ratio",
     "fallback_intent_ratio", "split_allocations", "match_time_ms", "proof_time_ms",
     "beacon_bytes_per_intent", "cross_messages_per_tx", "capital_lock_s", "watermark_skew",
-    "batch_count", "stage_source_s", "stage_second_hop_s", "stage_window_s", "stage_match_s",
+    "batch_count", "stage_source_s", "stage_second_hop_s", "stage_coordination_s",
+    "stage_transfer_s", "stage_target_s", "stage_window_s", "stage_match_s",
     "stage_beacon_s", "stage_settlement_s", "stage_fallback_s",
 ]
 

@@ -21,6 +21,7 @@ type txLifeCycle struct {
 	originalTxCreateTime, originalTxCommitTime     time.Time
 	innerShardTxBlockProposeTime                   time.Time
 	relay1BlockProposeTime, relay2BlockProposeTime time.Time
+	relay2TxCreateTime                             time.Time
 	relay1CommitTime, relay2CommitTime             time.Time
 	isCrossShardTx                                 bool
 }
@@ -38,6 +39,7 @@ var detailTxInfoMeasures = []string{
 	"Inner shard tx block propose time",
 	"Relay1 block propose time",
 	"Relay1 tx commit time",
+	"Relay2 tx create time",
 	"Relay2 block propose time",
 	"Relay2 tx commit time",
 }
@@ -141,6 +143,8 @@ func (r *RelayStats) UpdateMeasureRecord(msg *rpcserver.WrappedMsg) error {
 		_, r2Exist := r.txLifecycles[strTxHash]
 		if !r2Exist {
 			r.txLifecycles[strTxHash] = &txLifeCycle{originalTxCreateTime: tx.CreateTime, isCrossShardTx: true}
+		} else if r.txLifecycles[strTxHash].originalTxCreateTime.IsZero() {
+			r.txLifecycles[strTxHash].originalTxCreateTime = tx.CreateTime
 		}
 
 		r.txLifecycles[strTxHash].relay1BlockProposeTime = bInfo.BlockProposeTime
@@ -162,9 +166,10 @@ func (r *RelayStats) UpdateMeasureRecord(msg *rpcserver.WrappedMsg) error {
 
 		_, r1Exist := r.txLifecycles[strTxHash]
 		if !r1Exist {
-			r.txLifecycles[strTxHash] = &txLifeCycle{originalTxCreateTime: tx.CreateTime, isCrossShardTx: true}
+			r.txLifecycles[strTxHash] = &txLifeCycle{isCrossShardTx: true}
 		}
 
+		r.txLifecycles[strTxHash].relay2TxCreateTime = tx.CreateTime
 		r.txLifecycles[strTxHash].relay2BlockProposeTime = bInfo.BlockProposeTime
 		r.txLifecycles[strTxHash].relay2CommitTime = bInfo.BlockCommitTime
 		r.txLifecycles[strTxHash].originalTxCommitTime = bInfo.BlockCommitTime
@@ -209,6 +214,7 @@ func (r *RelayStats) writeTxInfo(txHash []byte, tl *txLifeCycle) error {
 		utils.ConvertTime2Str(tl.innerShardTxBlockProposeTime),
 		utils.ConvertTime2Str(tl.relay1BlockProposeTime),
 		utils.ConvertTime2Str(tl.relay1CommitTime),
+		utils.ConvertTime2Str(tl.relay2TxCreateTime),
 		utils.ConvertTime2Str(tl.relay2BlockProposeTime),
 		utils.ConvertTime2Str(tl.relay2CommitTime),
 	}

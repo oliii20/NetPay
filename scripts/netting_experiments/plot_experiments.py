@@ -10,6 +10,7 @@ import statistics
 import struct
 import zlib
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -22,6 +23,7 @@ PALETTE = {
     "purple": "#8172B3",
     "teal": "#64B5CD",
     "yellow": "#CCB974",
+    "red": "#C44E52",
     "gray": "#8C8C8C",
     "light_gray": "#E6E6E6",
     "text": "#222222",
@@ -29,19 +31,27 @@ PALETTE = {
 
 STAGE_FIELDS = [
     "stage_source_s",
-    "stage_second_hop_s",
+    "stage_coordination_s",
+    "stage_transfer_s",
+    "stage_target_s",
     "stage_window_s",
     "stage_match_s",
     "stage_beacon_s",
     "stage_settlement_s",
     "stage_fallback_s",
 ]
+DEFAULT_SUMMARY = Path(".exp/netting-paper/latest/summary.csv")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--summary", type=Path, default=Path(".exp/netting-paper/summary.csv"))
+    parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
     parser.add_argument("--out", type=Path, default=Path("figures/netting"))
+    parser.add_argument(
+        "--no-timestamp",
+        action="store_true",
+        help="write canonical figure names and overwrite existing files",
+    )
     parser.add_argument(
         "--allow-missing",
         action="store_true",
@@ -49,33 +59,58 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    rows = read_rows(args.summary)
+    summary_path = resolve_summary_path(args.summary)
+    rows = read_rows(summary_path)
     if not rows:
-        raise SystemExit(f"no rows found in {args.summary}")
-    rows = enrich_stage_latencies(rows, args.summary)
+        raise SystemExit(f"no rows found in {summary_path}")
+    rows = enrich_stage_latencies(rows, summary_path)
     args.out.mkdir(parents=True, exist_ok=True)
 
     generated: list[Path] = []
     skipped: list[str] = []
     seen_missing: set[str] = set()
+    timestamp = "" if args.no_timestamp else datetime.now().strftime("%Y%m%d-%H%M%S")
     for experiment, filename, plot in plotters():
-        path = args.out / filename
+        path = timestamped_path(args.out / filename, timestamp)
         if exp_rows(rows, experiment):
             plot(rows, path)
             generated.append(path)
             continue
-        cleanup_stale_figure(path)
+        if args.no_timestamp:
+            cleanup_stale_figure(path)
         if experiment not in seen_missing:
             skipped.append(experiment)
             seen_missing.add(experiment)
 
     if not generated:
-        raise SystemExit(f"no supported experiment groups found in {args.summary}")
+        raise SystemExit(f"no supported experiment groups found in {summary_path}")
     print(f"figures: {args.out}")
     print("generated: " + ", ".join(path.name for path in generated))
     if skipped:
         print("skipped missing groups: " + ", ".join(skipped))
     return 0
+
+
+def resolve_summary_path(path: Path) -> Path:
+    if path.exists():
+        return path
+    if path == DEFAULT_SUMMARY:
+        latest_txt = path.parents[1] / "latest.txt"
+        if latest_txt.exists():
+            latest_dir = Path(latest_txt.read_text(encoding="utf-8").strip())
+            fallback = latest_dir / "summary.csv"
+            if fallback.exists():
+                return fallback
+        legacy = path.parents[1] / "summary.csv"
+        if legacy.exists():
+            return legacy
+    return path
+
+
+def timestamped_path(path: Path, timestamp: str) -> Path:
+    if not timestamp:
+        return path
+    return path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
 
 
 def plotters() -> list[tuple[str, str, Callable[[list[dict[str, str]], Path], None]]]:
@@ -104,7 +139,7 @@ def read_rows(path: Path) -> list[dict[str, str]]:
 def enrich_stage_latencies(rows: list[dict[str, str]], summary_path: Path) -> list[dict[str, str]]:
     runs_dir = summary_path.resolve().parent / "runs"
     for row in rows:
-        if any(f(row, field) > 0 for field in STAGE_FIELDS):
+        if all(field in row for field in STAGE_FIELDS):
             continue
         run_id = row.get("run_id", "")
         run_dir = runs_dir / run_id
@@ -171,79 +206,89 @@ def empty_stage_latencies() -> dict[str, float]:
 def netting_stage_latencies(batches: list[dict[str, str]], intents: list[dict[str, str]]) -> dict[str, float]:
     completed = [row for row in intents if f(row, "EndToEndLatencyNs") > 0]
     completed_count = max(1, len(completed))
-    window_s = mean(f(row, "WindowOpenDurationNs") / 1e9 for row in batches)
-    match_s = mean(f(row, "MatchTimeNs") / 1e9 for row in batches)
-    beacon_s = mean(f(row, "BeaconConsensusLatencyNs") / 1e9 for row in batches)
-    settlement_total_s = mean(f(row, "SettlementLatencyNs") / 1e9 for row in completed)
     stages = empty_stage_latencies()
-    stages.update(
-        {
-            "stage_source_s": mean(f(row, "ReservationLatencyNs") / 1e9 for row in completed),
-            "stage_window_s": window_s,
-            "stage_match_s": match_s,
-            "stage_beacon_s": beacon_s,
-            "stage_settlement_s": max(0.0, settlement_total_s - window_s - match_s - beacon_s),
-            "stage_fallback_s": sum(
-                parse_duration_from_times(row.get("SettledAt", ""), row.get("CompletedAt", ""))
-                for row in completed
-                if row.get("UsedFallback") == "true"
-            )
-            / completed_count,
-        }
-    )
+    batch_by_id = {row.get("BatchID", ""): row for row in batches}
+    for row in completed:
+        batch = batch_by_id.get(row.get("BatchID", ""))
+        window_s = f(batch, "WindowOpenDurationNs") / 1e9 if batch else 0.0
+        match_s = f(batch, "MatchTimeNs") / 1e9 if batch else 0.0
+        beacon_s = f(batch, "BeaconConsensusLatencyNs") / 1e9 if batch else 0.0
+        settlement_total_s = f(row, "SettlementLatencyNs") / 1e9
+        capital_lock_s = f(row, "CapitalLockDurationNs") / 1e9
+        post_source_s = capital_lock_s if capital_lock_s > 0 else settlement_total_s
+        stages["stage_source_s"] += f(row, "ReservationLatencyNs") / 1e9
+        stages["stage_window_s"] += window_s
+        stages["stage_match_s"] += match_s
+        stages["stage_beacon_s"] += beacon_s
+        if row.get("UsedFallback") == "true":
+            fallback_s = f(row, "FallbackLatencyNs") / 1e9
+            if fallback_s <= 0:
+                fallback_s = max(0.0, post_source_s - window_s - match_s - beacon_s)
+            stages["stage_fallback_s"] += fallback_s
+        else:
+            stages["stage_settlement_s"] += max(0.0, settlement_total_s - window_s - match_s - beacon_s)
+    for key in stages:
+        stages[key] /= completed_count
     return stages
 
 
 def relay_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     stages = empty_stage_latencies()
-    total = max(1, len(detail))
-    for row in detail:
-        if (
-            row.get("Is cross-shard tx or not") == "true"
-            and row.get("Relay1 tx commit time")
-            and row.get("Relay2 tx commit time")
-        ):
-            stages["stage_source_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Relay1 tx commit time", "")
-            )
-            stages["stage_second_hop_s"] += parse_duration_from_times(
-                row.get("Relay1 tx commit time", ""), row.get("Relay2 tx commit time", "")
-            )
-        elif row.get("Tx finally commit time"):
-            stages["stage_source_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
-            )
-    stages["stage_source_s"] /= total
-    stages["stage_second_hop_s"] /= total
+    cross = [
+        row
+        for row in detail
+        if row.get("Is cross-shard tx or not") == "true"
+        and row.get("Relay1 tx commit time")
+        and row.get("Relay2 tx commit time")
+    ]
+    total = max(1, len(cross))
+    for row in cross:
+        relay2_create_time = row.get("Relay2 tx create time") or row.get("Relay2 block propose time", "")
+        stages["stage_source_s"] += parse_duration_from_times(
+            row.get("Tx create time", ""), row.get("Relay1 tx commit time", "")
+        )
+        stages["stage_transfer_s"] += parse_duration_from_times(
+            row.get("Relay1 tx commit time", ""), relay2_create_time
+        )
+        stages["stage_target_s"] += parse_duration_from_times(
+            relay2_create_time, row.get("Relay2 tx commit time", "")
+        )
+    for key in stages:
+        stages[key] /= total
     return stages
 
 
 def broker_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     stages = empty_stage_latencies()
-    total = max(1, len(detail))
-    for row in detail:
-        if (
-            row.get("Mechanism") == "Broker"
-            and row.get("Broker1 tx commit time")
-            and row.get("Broker2 tx commit time")
-        ):
-            stages["stage_source_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Broker1 tx commit time", "")
-            )
-            stages["stage_second_hop_s"] += parse_duration_from_times(
-                row.get("Broker1 tx commit time", ""), row.get("Broker2 tx commit time", "")
-            )
-        elif row.get("Mechanism") == "FallbackToRelay" and row.get("Tx finally commit time"):
-            stages["stage_fallback_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
-            )
-        elif row.get("Tx finally commit time"):
-            stages["stage_source_s"] += parse_duration_from_times(
-                row.get("Tx create time", ""), row.get("Tx finally commit time", "")
-            )
-    stages["stage_source_s"] /= total
-    stages["stage_second_hop_s"] /= total
-    stages["stage_fallback_s"] /= total
+    cross = [
+        row
+        for row in detail
+        if row.get("Mechanism") == "Broker"
+        and row.get("Broker1 tx commit time")
+        and row.get("Broker2 tx commit time")
+    ]
+    fallback = [
+        row
+        for row in detail
+        if row.get("Mechanism") == "FallbackToRelay" and row.get("Tx finally commit time")
+    ]
+    total = max(1, len(cross) + len(fallback))
+    for row in cross:
+        stages["stage_source_s"] += parse_duration_from_times(
+            row.get("Tx create time", ""), row.get("Broker1 tx commit time", "")
+        )
+        stages["stage_coordination_s"] += parse_duration_from_times(
+            row.get("Broker1 tx commit time", ""), row.get("Broker2 tx create time", "")
+        )
+        stages["stage_target_s"] += parse_duration_from_times(
+            row.get("Broker2 tx create time", ""), row.get("Broker2 tx commit time", "")
+        )
+    for row in fallback:
+        stages["stage_fallback_s"] += parse_duration_from_times(
+            row.get("Tx create time", ""), row.get("Tx finally commit time", "")
+        )
+    for key in stages:
+        stages[key] /= total
     return stages
 
 
@@ -273,30 +318,32 @@ def plot_baseline_stage_latency(rows: list[dict[str, str]], path: Path) -> None:
     labels = ["Relay", "Broker", "Netting"]
     stages = [
         ("stage_source_s", "Source", PALETTE["gray"]),
-        ("stage_second_hop_s", "Second", PALETTE["blue"]),
+        ("stage_coordination_s", "Coord", PALETTE["yellow"]),
+        ("stage_transfer_s", "Transfer", PALETTE["blue"]),
+        ("stage_target_s", "Target", PALETTE["teal"]),
         ("stage_window_s", "Window", PALETTE["orange"]),
         ("stage_match_s", "Match", PALETTE["green"]),
         ("stage_beacon_s", "Beacon", PALETTE["purple"]),
-        ("stage_settlement_s", "Settle", PALETTE["teal"]),
-        ("stage_fallback_s", "Fallback", PALETTE["yellow"]),
+        ("stage_settlement_s", "Settle", PALETTE["red"]),
+        ("stage_fallback_s", "Fallback", "#6B6B6B"),
     ]
     stacks = [
         [mean(f(row, field) for row in data if row.get("method") == method) for field, _, _ in stages]
         for method in methods
     ]
-    chart = PNGFigure(1180, 420)
+    chart = PNGFigure(1240, 460)
     chart.title("Stage latency breakdown", 18, 22)
     chart.stacked_bar_panel(
         70,
         70,
-        760,
-        260,
+        800,
+        280,
         labels,
         stacks,
         [label for _, label, _ in stages],
         [color for _, _, color in stages],
         "Stage latency (s)",
-        865,
+        910,
         80,
     )
     chart.save(path)
@@ -610,6 +657,9 @@ class PNGFigure:
         xlabel: str,
         ylabel: str,
         y_max: float | None = None,
+        reference_y: float | None = None,
+        reference_label: str = "",
+        x_tick_values: list[float] | None = None,
     ) -> None:
         all_points = [point for values in series.values() for point in values]
         if not all_points:
@@ -623,6 +673,12 @@ class PNGFigure:
             x_max += 1.0
         max_v = y_max if y_max is not None else max(ys + [1e-9]) * 1.18
         self.axes(x, y, w, h, ylabel, xlabel, max_v)
+        if reference_y is not None:
+            ref = min(max(reference_y, 0.0), max_v)
+            ref_y = y + h - ref / max_v * h
+            self.dashed_line(x, ref_y, x + w, ref_y, PALETTE["red"], width=2)
+            if reference_label:
+                self.draw_text(reference_label, x + w - 4, ref_y - 16, scale=1, anchor="right", color=PALETTE["red"])
         colors = [PALETTE["ours"], PALETTE["blue"], PALETTE["green"], PALETTE["orange"]]
         for sidx, (name, values) in enumerate(series.items()):
             color = colors[sidx % len(colors)]
@@ -648,7 +704,55 @@ class PNGFigure:
             ly = y + 15
             self.line(lx, ly, lx + 18, ly, color, width=2)
             self.draw_text(name, lx + 23, ly - 4, scale=1)
-        self.x_ticks(x, y, w, h, x_min, x_max)
+        self.x_ticks(x, y, w, h, x_min, x_max, x_tick_values)
+
+    def box_panel(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        values: list[float],
+        ylabel: str,
+        xlabel: str,
+        y_max: float | None = None,
+        reference_y: float | None = None,
+        reference_label: str = "",
+    ) -> None:
+        finite = sorted(v for v in values if math.isfinite(v))
+        max_v = y_max if y_max is not None else max(finite + [1e-9]) * 1.18
+        self.axes(x, y, w, h, ylabel, xlabel, max_v)
+        if not finite:
+            return
+
+        def sy(value: float) -> float:
+            return y + h - min(max(value, 0.0), max_v) / max_v * h
+
+        low = finite[0]
+        q1 = percentile_from_sorted(finite, 25)
+        median = percentile_from_sorted(finite, 50)
+        q3 = percentile_from_sorted(finite, 75)
+        high = finite[-1]
+        cx = x + w / 2
+        box_w = min(96, w * 0.42)
+
+        if reference_y is not None:
+            ref = sy(reference_y)
+            self.dashed_line(x, ref, x + w, ref, PALETTE["red"], width=2)
+            if reference_label:
+                self.draw_text(reference_label, x + w - 4, ref - 16, scale=1, anchor="right", color=PALETTE["red"])
+
+        self.line(cx, sy(low), cx, sy(high), PALETTE["gray"], width=2)
+        self.line(cx - box_w * 0.25, sy(low), cx + box_w * 0.25, sy(low), PALETTE["gray"], width=2)
+        self.line(cx - box_w * 0.25, sy(high), cx + box_w * 0.25, sy(high), PALETTE["gray"], width=2)
+        self.rect(cx - box_w / 2, sy(q3), box_w, max(1, sy(q1) - sy(q3)), "#D8E7F5")
+        self.line(cx - box_w / 2, sy(q1), cx + box_w / 2, sy(q1), PALETTE["blue"], width=1)
+        self.line(cx - box_w / 2, sy(q3), cx + box_w / 2, sy(q3), PALETTE["blue"], width=1)
+        self.line(cx - box_w / 2, sy(median), cx + box_w / 2, sy(median), PALETTE["ours"], width=2)
+
+        for idx, value in enumerate(finite):
+            jitter = ((idx * 37) % 29 - 14) * min(1.0, box_w / 96)
+            self.circle(cx + box_w * 0.62 + jitter, sy(value), 2, "#A7A7A7")
 
     def axes(self, x: int, y: int, w: int, h: int, ylabel: str, xlabel: str, y_max: float) -> None:
         for i in range(5):
@@ -661,10 +765,19 @@ class PNGFigure:
         self.draw_text(xlabel, x + w / 2, y + h + 30, scale=1, anchor="center")
         self.draw_text(ylabel, x - 48, y + h / 2, scale=1, anchor="center", rotate_left=True)
 
-    def x_ticks(self, x: int, y: int, w: int, h: int, x_min: float, x_max: float) -> None:
-        for i in range(5):
-            val = x_min + (x_max - x_min) * i / 4
-            sx = x + w * i / 4
+    def x_ticks(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        x_min: float,
+        x_max: float,
+        tick_values: list[float] | None = None,
+    ) -> None:
+        ticks = tick_values or [x_min + (x_max - x_min) * i / 4 for i in range(5)]
+        for val in ticks:
+            sx = x + (val - x_min) / (x_max - x_min) * w
             self.line(sx, y, sx, y + h, PALETTE["light_gray"], width=1)
             self.draw_text(fmt(val), sx, y + h + 10, scale=1, anchor="center")
 
@@ -704,6 +817,13 @@ class PNGFigure:
             if e2 <= dx:
                 err += dx
                 y += sy
+
+    def dashed_line(self, x1: float, y1: float, x2: float, y2: float, color: str, width: int = 1) -> None:
+        segments = 18
+        dx = (x2 - x1) / segments
+        dy = (y2 - y1) / segments
+        for idx in range(0, segments, 2):
+            self.line(x1 + dx * idx, y1 + dy * idx, x1 + dx * (idx + 1), y1 + dy * (idx + 1), color, width)
 
     def circle(self, cx: float, cy: float, radius: int, color: str) -> None:
         rgb = parse_hex(color)
@@ -809,6 +929,20 @@ def fmt(value: float) -> str:
     if abs(value) >= 10:
         return f"{value:.1f}"
     return f"{value:.2f}"
+
+
+def percentile_from_sorted(values: list[float], percent: float) -> float:
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return values[0]
+    rank = (len(values) - 1) * percent / 100.0
+    lo = math.floor(rank)
+    hi = math.ceil(rank)
+    if lo == hi:
+        return values[int(rank)]
+    weight = rank - lo
+    return values[lo] * (1.0 - weight) + values[hi] * weight
 
 
 if __name__ == "__main__":

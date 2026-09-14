@@ -276,6 +276,7 @@ func (r *RelayTxBlockOp) sendRelayedTxs(ctx context.Context, b *block.Block, r1T
 		// modify relay transaction's RelayOpt
 		updatedRelayedTx := tx
 		updatedRelayedTx.RelayStage = transaction.Relay2Tx
+		updatedRelayedTx.CreateTime = time.Now()
 		relayedTxs[shardID] = append(relayedTxs[shardID], updatedRelayedTx)
 	}
 
