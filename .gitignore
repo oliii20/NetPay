@@ -13,6 +13,11 @@ exp
 # Do not upload your executable files!
 **/*.exe
 
+# 不要上传 Python 缓存文件！
+# Do not upload Python cache files!
+__pycache__/
+*.pyc
+
 # 不要上传大文件
 # Do not upload large files!
 **/*.zip

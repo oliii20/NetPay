@@ -30,7 +30,10 @@ PALETTE = {
 }
 
 STAGE_FIELDS = [
+    "stage_queue_s",
+    "stage_clpa_s",
     "stage_source_s",
+    "stage_second_hop_s",
     "stage_coordination_s",
     "stage_transfer_s",
     "stage_target_s",
@@ -40,6 +43,9 @@ STAGE_FIELDS = [
     "stage_settlement_s",
     "stage_fallback_s",
 ]
+RELAY_METHODS = {"static_relay", "clpa_relay"}
+BROKER_METHODS = {"static_broker", "clpa_broker"}
+CLPA_METHODS = {"clpa_relay", "clpa_broker"}
 DEFAULT_SUMMARY = Path(".exp/netting-paper/latest/summary.csv")
 
 
@@ -152,10 +158,14 @@ def enrich_stage_latencies(rows: list[dict[str, str]], summary_path: Path) -> li
 def stage_latencies_from_run(row: dict[str, str], run_dir: Path) -> dict[str, float]:
     method = row.get("method", "")
     results_dir = run_dir / "results"
-    if method == "static_relay":
-        return relay_stage_latencies(read_rows_if_exists(results_dir / "relay_stats_detail_tx_info.csv"))
-    if method == "static_broker":
-        return broker_stage_latencies(read_rows_if_exists(results_dir / "broker_stats_detail_tx_info.csv"))
+    if method in RELAY_METHODS:
+        stages = relay_stage_latencies(read_rows_if_exists(results_dir / "relay_stats_detail_tx_info.csv"))
+        stages.update(clpa_stage_latency(row, run_dir))
+        return stages
+    if method in BROKER_METHODS:
+        stages = broker_stage_latencies(read_rows_if_exists(results_dir / "broker_stats_detail_tx_info.csv"))
+        stages.update(clpa_stage_latency(row, run_dir))
+        return stages
     return netting_stage_latencies(
         read_rows_if_exists(results_dir / "netting_batch_metrics.csv"),
         read_rows_if_exists(results_dir / "netting_intent_metrics.csv"),
@@ -243,16 +253,22 @@ def relay_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     ]
     total = max(1, len(cross))
     for row in cross:
+        relay1_propose_time = row.get("Relay1 block propose time", "")
+        relay1_start_time = relay1_propose_time or row.get("Tx create time", "")
         relay2_create_time = row.get("Relay2 tx create time") or row.get("Relay2 block propose time", "")
-        stages["stage_source_s"] += parse_duration_from_times(
-            row.get("Tx create time", ""), row.get("Relay1 tx commit time", "")
-        )
-        stages["stage_transfer_s"] += parse_duration_from_times(
+        queue_s = parse_duration_from_times(row.get("Tx create time", ""), relay1_propose_time)
+        source_s = parse_duration_from_times(relay1_start_time, row.get("Relay1 tx commit time", ""))
+        transfer_s = parse_duration_from_times(
             row.get("Relay1 tx commit time", ""), relay2_create_time
         )
-        stages["stage_target_s"] += parse_duration_from_times(
+        target_s = parse_duration_from_times(
             relay2_create_time, row.get("Relay2 tx commit time", "")
         )
+        stages["stage_queue_s"] += queue_s
+        stages["stage_source_s"] += source_s
+        stages["stage_second_hop_s"] += transfer_s + target_s
+        stages["stage_transfer_s"] += transfer_s
+        stages["stage_target_s"] += target_s
     for key in stages:
         stages[key] /= total
     return stages
@@ -274,15 +290,22 @@ def broker_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     ]
     total = max(1, len(cross) + len(fallback))
     for row in cross:
-        stages["stage_source_s"] += parse_duration_from_times(
-            row.get("Tx create time", ""), row.get("Broker1 tx commit time", "")
+        broker1_create_time = row.get("Broker1 tx create time", "") or row.get("Tx create time", "")
+        queue_s = parse_duration_from_times(row.get("Tx create time", ""), row.get("Broker1 tx create time", ""))
+        source_s = parse_duration_from_times(
+            broker1_create_time, row.get("Broker1 tx commit time", "")
         )
-        stages["stage_coordination_s"] += parse_duration_from_times(
+        coordination_s = parse_duration_from_times(
             row.get("Broker1 tx commit time", ""), row.get("Broker2 tx create time", "")
         )
-        stages["stage_target_s"] += parse_duration_from_times(
+        target_s = parse_duration_from_times(
             row.get("Broker2 tx create time", ""), row.get("Broker2 tx commit time", "")
         )
+        stages["stage_queue_s"] += queue_s
+        stages["stage_source_s"] += source_s
+        stages["stage_second_hop_s"] += coordination_s + target_s
+        stages["stage_coordination_s"] += coordination_s
+        stages["stage_target_s"] += target_s
     for row in fallback:
         stages["stage_fallback_s"] += parse_duration_from_times(
             row.get("Tx create time", ""), row.get("Tx finally commit time", "")
@@ -292,10 +315,17 @@ def broker_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     return stages
 
 
+def clpa_stage_latency(row: dict[str, str], run_dir: Path) -> dict[str, float]:
+    if row.get("method", "") not in CLPA_METHODS:
+        return {"stage_clpa_s": 0.0}
+    metrics = read_rows_if_exists(run_dir / "results" / "clpa_repartition_metrics.csv")
+    total_s = sum(f(metric, "Total latency ns") / 1e9 for metric in metrics)
+    return {"stage_clpa_s": total_s / max(1.0, f(row, "tx_committed"))}
+
+
 def plot_baseline(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp1_baseline")
-    methods = ["static_relay", "static_broker", "netting_static_relay"]
-    labels = ["Relay", "Broker", "Netting"]
+    methods, labels = baseline_methods_and_labels(data)
     panels = [
         ("throughput_tps", "Throughput (tx/s)", False),
         ("avg_latency_s", "Avg. latency (s)", False),
@@ -314,9 +344,10 @@ def plot_baseline(rows: list[dict[str, str]], path: Path) -> None:
 
 def plot_baseline_stage_latency(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp1_baseline")
-    methods = ["static_relay", "static_broker", "netting_static_relay"]
-    labels = ["Relay", "Broker", "Netting"]
+    methods, labels = baseline_methods_and_labels(data)
     stages = [
+        ("stage_queue_s", "Queue", PALETTE["light_gray"]),
+        ("stage_clpa_s", "CLPA", "#9A8F5A"),
         ("stage_source_s", "Source", PALETTE["gray"]),
         ("stage_coordination_s", "Coord", PALETTE["yellow"]),
         ("stage_transfer_s", "Transfer", PALETTE["blue"]),
@@ -347,6 +378,13 @@ def plot_baseline_stage_latency(rows: list[dict[str, str]], path: Path) -> None:
         80,
     )
     chart.save(path)
+
+
+def baseline_methods_and_labels(data: list[dict[str, str]]) -> tuple[list[str], list[str]]:
+    has_clpa_broker = any(row.get("method") == "clpa_broker" for row in data)
+    broker_method = "clpa_broker" if has_clpa_broker else "static_broker"
+    broker_label = "CLPA Broker" if has_clpa_broker else "Broker"
+    return ["static_relay", broker_method, "netting_static_relay"], ["Relay", broker_label, "Netting"]
 
 
 def plot_balance(rows: list[dict[str, str]], path: Path) -> None:

@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/config"
@@ -57,6 +58,7 @@ func NewCLPABrokerCommittee(
 			epochSynced:     false,
 			supervisorEpoch: 0,
 			shardEpoch:      make([]int64, cfg.ShardNum),
+			clpaMetricsPath: clpaMetricsFile(filepath.Clean(cfg.ResultOutputDir)),
 		},
 		bManager:    bs,
 		txSource:    ts,
@@ -121,7 +123,9 @@ func (c *CLPABrokerCommittee) ShouldStop() bool {
 func (c *CLPABrokerCommittee) repartition(ctx context.Context) error {
 	slog.InfoContext(ctx, "repartition start")
 
+	startTime := time.Now()
 	modifiedMap, _ := c.state.CLPAPartition()
+	partitionEndTime := time.Now()
 	c.supervisorEpoch++
 	cr := &message.CLPARepartitionStartMsg{
 		Epoch:       c.supervisorEpoch,
@@ -139,6 +143,16 @@ func (c *CLPABrokerCommittee) repartition(ctx context.Context) error {
 	}
 
 	c.conn.GroupBroadcastMessage(ctx, allLeaders, w)
+	broadcastEndTime := time.Now()
+	if err = c.recordCLPARound(
+		c.supervisorEpoch,
+		startTime,
+		partitionEndTime,
+		broadcastEndTime,
+		len(modifiedMap),
+	); err != nil {
+		slog.ErrorContext(ctx, "record CLPA repartition metric failed", "err", err)
+	}
 
 	slog.InfoContext(ctx, "repartition finished", "epoch", c.supervisorEpoch, "migrated number", len(modifiedMap))
 	// set epoch-synced to false

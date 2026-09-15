@@ -35,6 +35,15 @@ SUPERVISOR_SHARD_ID = 2147483647
 CSV_HEADER = [f"col{i}" for i in range(17)]
 BLOCK_SIZE_LIMIT = 100
 DEFAULT_MAX_WINDOW_MS = 2000
+RELAY_CONSENSUS_TYPES = {"static_relay", "clpa_relay"}
+BROKER_CONSENSUS_TYPES = {"static_broker", "clpa_broker"}
+CLPA_CONSENSUS_TYPES = {"clpa_relay", "clpa_broker"}
+NON_NETTING_METHOD_CONSENSUS = {
+    "static_relay": "static_relay",
+    "clpa_relay": "clpa_relay",
+    "static_broker": "static_broker",
+    "clpa_broker": "clpa_broker",
+}
 
 
 def default_netting_batch_size(shard_num: int, block_limit: int = BLOCK_SIZE_LIMIT) -> int:
@@ -136,6 +145,7 @@ def main() -> int:
         args.settlement_chunk_size,
         args.max_window_ms,
     )
+    validate_specs(specs)
     if args.dry_run:
         for spec in specs:
             print(spec.run_id)
@@ -318,9 +328,9 @@ def build_specs(
                     RunSpec(
                         "exp1_baseline",
                         "method",
-                        "static_broker",
-                        method="static_broker",
-                        consensus_type="static_broker",
+                        "clpa_broker",
+                        method="clpa_broker",
+                        consensus_type="clpa_broker",
                         netting_enabled=False,
                         workload="dataset",
                         block_limit=block_limit,
@@ -452,6 +462,32 @@ def build_specs(
     if settlement_chunk_size_override is not None:
         specs = [replace(spec, settlement_chunk_size=settlement_chunk_size_override) for spec in specs]
     return specs
+
+
+def validate_specs(specs: list[RunSpec]) -> None:
+    for spec in specs:
+        if spec.netting_enabled:
+            if not spec.method.startswith("netting_"):
+                raise SystemExit(
+                    f"{spec.run_id}: netting_enabled is true but method is {spec.method!r}; "
+                    "use a netting_* method name or disable netting."
+                )
+            if spec.consensus_type not in RELAY_CONSENSUS_TYPES:
+                raise SystemExit(
+                    f"{spec.run_id}: netting currently runs on relay consensus, got "
+                    f"{spec.consensus_type!r}."
+                )
+            continue
+
+        expected_consensus = NON_NETTING_METHOD_CONSENSUS.get(spec.method)
+        if expected_consensus is None:
+            raise SystemExit(f"{spec.run_id}: unknown non-netting method {spec.method!r}.")
+        if spec.consensus_type != expected_consensus:
+            raise SystemExit(
+                f"{spec.run_id}: method {spec.method!r} requires consensus_type "
+                f"{expected_consensus!r}, got {spec.consensus_type!r}. "
+                "Update both fields together so labels and collected metrics match."
+            )
 
 
 def load_dataset(path: Path, max_rows: int | None = None) -> list[list[str]]:
@@ -1050,13 +1086,17 @@ def summarize_run(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[str, o
         "matcher_mode": spec.matcher_mode,
         "network_latency_ms": spec.network_latency_ms,
         "elapsed_s": elapsed_s,
+        "consensus_type": spec.consensus_type,
+        "netting_enabled": spec.netting_enabled,
     }
     if spec.netting_enabled:
         result.update(summarize_netting(run_dir, spec, elapsed_s))
-    elif spec.consensus_type == "static_relay":
+    elif spec.consensus_type in RELAY_CONSENSUS_TYPES:
         result.update(summarize_relay(run_dir, spec))
-    else:
+    elif spec.consensus_type in BROKER_CONSENSUS_TYPES:
         result.update(summarize_broker(run_dir, spec))
+    else:
+        raise ValueError(f"unsupported consensus_type: {spec.consensus_type}")
     return result
 
 
@@ -1171,7 +1211,11 @@ def summarize_relay(run_dir: Path, spec: RunSpec) -> dict[str, object]:
         "capital_lock_s": 0.0,
         "watermark_skew": 0.0,
         "batch_count": 0,
-        **relay_stage_latencies(detail),
+        **with_clpa_stage(
+            relay_stage_latencies(detail),
+            summarize_clpa_repartition(run_dir, spec, len(detail)),
+            len(detail),
+        ),
     }
 
 
@@ -1185,6 +1229,7 @@ def summarize_broker(run_dir: Path, spec: RunSpec) -> dict[str, object]:
     ]
     broker_count = sum(1 for row in detail if row.get("Mechanism") == "Broker")
     fallback_count = sum(1 for row in detail if row.get("Mechanism") == "FallbackToRelay")
+    fallback_ratio = fallback_count / max(1.0, len(detail))
     tps_tx_count, tps_duration, throughput = baseline_throughput_parts(brief, len(detail))
     return {
         "tx_committed": len(detail),
@@ -1198,9 +1243,9 @@ def summarize_broker(run_dir: Path, spec: RunSpec) -> dict[str, object]:
         "p50_latency_s": percentile(e2e, 50),
         "p95_latency_s": percentile(e2e, 95),
         "matched_value_ratio": 0.0,
-        "fallback_value_ratio": 1.0,
+        "fallback_value_ratio": fallback_ratio,
         "matched_intent_ratio": 0.0,
-        "fallback_intent_ratio": 1.0,
+        "fallback_intent_ratio": fallback_ratio,
         "split_allocations": 0.0,
         "match_time_ms": 0.0,
         "proof_time_ms": 0.0,
@@ -1209,8 +1254,56 @@ def summarize_broker(run_dir: Path, spec: RunSpec) -> dict[str, object]:
         "capital_lock_s": 0.0,
         "watermark_skew": 0.0,
         "batch_count": 0,
-        **broker_stage_latencies(detail),
+        **with_clpa_stage(
+            broker_stage_latencies(detail),
+            summarize_clpa_repartition(run_dir, spec, len(detail)),
+            len(detail),
+        ),
     }
+
+
+def summarize_clpa_repartition(run_dir: Path, spec: RunSpec, tx_count: int) -> dict[str, float]:
+    zero = {
+        "clpa_rounds": 0.0,
+        "clpa_migrated_accounts": 0.0,
+        "clpa_partition_s": 0.0,
+        "clpa_broadcast_s": 0.0,
+        "clpa_migration_wait_s": 0.0,
+        "clpa_total_s": 0.0,
+        "stage_clpa_s": 0.0,
+    }
+    if spec.consensus_type not in CLPA_CONSENSUS_TYPES:
+        return zero
+
+    rows = read_dicts(run_dir / "results" / "clpa_repartition_metrics.csv")
+    completed = [row for row in rows if float_or_zero(row.get("Total latency ns")) > 0]
+    if not completed:
+        return zero
+
+    partition_s = sum(float_or_zero(row.get("Partition latency ns")) / 1e9 for row in completed)
+    broadcast_s = sum(float_or_zero(row.get("Broadcast latency ns")) / 1e9 for row in completed)
+    migration_wait_s = sum(float_or_zero(row.get("Migration sync latency ns")) / 1e9 for row in completed)
+    total_s = sum(float_or_zero(row.get("Total latency ns")) / 1e9 for row in completed)
+    return {
+        "clpa_rounds": float(len(completed)),
+        "clpa_migrated_accounts": sum(float_or_zero(row.get("Migrated account count")) for row in completed),
+        "clpa_partition_s": partition_s,
+        "clpa_broadcast_s": broadcast_s,
+        "clpa_migration_wait_s": migration_wait_s,
+        "clpa_total_s": total_s,
+        "stage_clpa_s": total_s / max(1.0, float(tx_count)),
+    }
+
+
+def with_clpa_stage(
+    stages: dict[str, float],
+    clpa_summary: dict[str, float],
+    tx_count: int,
+) -> dict[str, float]:
+    merged = dict(stages)
+    merged.update(clpa_summary)
+    merged["stage_clpa_s"] = clpa_summary.get("clpa_total_s", 0.0) / max(1.0, float(tx_count))
+    return merged
 
 
 def baseline_throughput_parts(brief: list[dict[str, str]], fallback_tx_count: int) -> tuple[float, float, float]:
@@ -1232,6 +1325,8 @@ def baseline_throughput_parts(brief: list[dict[str, str]], fallback_tx_count: in
 
 def empty_stage_latencies() -> dict[str, float]:
     return {
+        "stage_queue_s": 0.0,
+        "stage_clpa_s": 0.0,
         "stage_source_s": 0.0,
         "stage_second_hop_s": 0.0,
         "stage_coordination_s": 0.0,
@@ -1286,7 +1381,10 @@ def relay_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     ]
     total = max(1, len(cross))
     for row in cross:
-        source_s = parse_duration_from_times(row.get("Tx create time", ""), row.get("Relay1 tx commit time", ""))
+        relay1_propose_time = row.get("Relay1 block propose time", "")
+        relay1_start_time = relay1_propose_time or row.get("Tx create time", "")
+        queue_s = parse_duration_from_times(row.get("Tx create time", ""), relay1_propose_time)
+        source_s = parse_duration_from_times(relay1_start_time, row.get("Relay1 tx commit time", ""))
         relay2_create_time = row.get("Relay2 tx create time") or row.get("Relay2 block propose time", "")
         transfer_s = parse_duration_from_times(
             row.get("Relay1 tx commit time", ""), relay2_create_time
@@ -1294,6 +1392,7 @@ def relay_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
         target_s = parse_duration_from_times(
             relay2_create_time, row.get("Relay2 tx commit time", "")
         )
+        stages["stage_queue_s"] += queue_s
         stages["stage_source_s"] += source_s
         stages["stage_second_hop_s"] += transfer_s + target_s
         stages["stage_transfer_s"] += transfer_s
@@ -1329,13 +1428,18 @@ def broker_stage_latencies(detail: list[dict[str, str]]) -> dict[str, float]:
     ]
     total = max(1, len(cross) + len(fallback))
     for row in cross:
-        source_s = parse_duration_from_times(row.get("Tx create time", ""), row.get("Broker1 tx commit time", ""))
+        broker1_create_time = row.get("Broker1 tx create time", "") or row.get("Tx create time", "")
+        queue_s = parse_duration_from_times(row.get("Tx create time", ""), row.get("Broker1 tx create time", ""))
+        source_s = parse_duration_from_times(
+            broker1_create_time, row.get("Broker1 tx commit time", "")
+        )
         coordination_s = parse_duration_from_times(
             row.get("Broker1 tx commit time", ""), row.get("Broker2 tx create time", "")
         )
         target_s = parse_duration_from_times(
             row.get("Broker2 tx create time", ""), row.get("Broker2 tx commit time", "")
         )
+        stages["stage_queue_s"] += queue_s
         stages["stage_source_s"] += source_s
         stages["stage_second_hop_s"] += coordination_s + target_s
         stages["stage_coordination_s"] += coordination_s
@@ -1425,14 +1529,17 @@ SUMMARY_FIELDS = [
     "run_id", "experiment", "variable", "value", "method", "seed", "shard_num", "node_num",
     "tx_number", "block_limit", "block_interval_ms", "beacon_block_interval_ms", "batch_size",
     "settlement_chunk_size", "max_window_ms", "matcher_mode", "network_latency_ms", "elapsed_s",
-    "tx_committed", "tps_tx_count", "tps_duration_s", "latency_tx_count", "latency_sum_s",
+    "consensus_type", "netting_enabled", "tx_committed", "tps_tx_count", "tps_duration_s",
+    "latency_tx_count", "latency_sum_s",
     "stage_latency_tx_count", "throughput_tps", "avg_latency_s", "p50_latency_s",
     "p95_latency_s", "matched_value_ratio", "fallback_value_ratio", "matched_intent_ratio",
     "fallback_intent_ratio", "split_allocations", "match_time_ms", "proof_time_ms",
     "beacon_bytes_per_intent", "cross_messages_per_tx", "capital_lock_s", "watermark_skew",
-    "batch_count", "stage_source_s", "stage_second_hop_s", "stage_coordination_s",
-    "stage_transfer_s", "stage_target_s", "stage_window_s", "stage_match_s",
-    "stage_beacon_s", "stage_settlement_s", "stage_fallback_s",
+    "batch_count", "clpa_rounds", "clpa_migrated_accounts", "clpa_partition_s",
+    "clpa_broadcast_s", "clpa_migration_wait_s", "clpa_total_s",
+    "stage_queue_s", "stage_clpa_s", "stage_source_s", "stage_second_hop_s",
+    "stage_coordination_s", "stage_transfer_s", "stage_target_s", "stage_window_s",
+    "stage_match_s", "stage_beacon_s", "stage_settlement_s", "stage_fallback_s",
 ]
 
 
