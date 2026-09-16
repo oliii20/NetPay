@@ -90,8 +90,11 @@ def main() -> int:
         args.tx_number,
         args.tx_speed,
         args.block_limit,
+        None,
+        None,
         args.block_interval_ms,
         args.beacon_block_interval_ms,
+        None,
         args.settlement_chunk_size,
         args.max_window_ms,
     )

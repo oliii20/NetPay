@@ -16,6 +16,46 @@ def ts(second: int) -> str:
 
 
 class RunExperimentSummaryTest(unittest.TestCase):
+    def test_build_specs_applies_cli_scale_and_batch_overrides(self) -> None:
+        specs = runner.build_specs(
+            "full",
+            {"exp1"},
+            [1],
+            tx_number_override=300000,
+            tx_speed_override=3000,
+            block_limit_override=2000,
+            shard_num_override=4,
+            node_num_override=4,
+            block_interval_ms_override=2000,
+            beacon_block_interval_ms_override=500,
+            batch_size_override=6000,
+            settlement_chunk_size_override=500,
+            max_window_ms_override=2500,
+        )
+
+        self.assertEqual(3, len(specs))
+        for spec in specs:
+            self.assertEqual(4, spec.shard_num)
+            self.assertEqual(4, spec.node_num)
+            self.assertEqual(6000, spec.batch_size)
+            self.assertEqual(2500, spec.max_window_ms)
+            self.assertEqual(300000, spec.tx_number)
+            self.assertEqual(3000, spec.tx_speed)
+
+    def test_exp1_runs_netting_before_baselines(self) -> None:
+        specs = runner.build_specs("full", {"exp1"}, [1])
+
+        self.assertEqual(
+            ["netting_static_relay", "static_relay", "clpa_broker"],
+            [spec.method for spec in specs],
+        )
+
+    def test_normalize_argv_splits_nonbreaking_spaces(self) -> None:
+        self.assertEqual(
+            ["--settlement-chunk-size", "500", "--batch-size", "6000", "--shard-num", "4"],
+            runner.normalize_argv(["--settlement-chunk-size", "500\u00a0--batch-size", "6000", "--shard-num\u00a04"]),
+        )
+
     def test_relay_stage_latencies_split_queue_source_transfer_target(self) -> None:
         stages = runner.relay_stage_latencies(
             [

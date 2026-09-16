@@ -112,8 +112,11 @@ def main() -> int:
     parser.add_argument("--tx-number", type=positive_int, help="override profile tx_number")
     parser.add_argument("--tx-speed", type=positive_int, help="override profile tx_injection_speed")
     parser.add_argument("--block-limit", type=positive_int, help="override system block transaction limit")
+    parser.add_argument("--shard-num", type=positive_int, help="override system shard count")
+    parser.add_argument("--node-num", type=positive_int, help="override nodes per shard")
     parser.add_argument("--block-interval-ms", type=positive_int, help="override consensus block interval in ms")
     parser.add_argument("--beacon-block-interval-ms", type=positive_int, help="override Beacon block interval in ms")
+    parser.add_argument("--batch-size", type=non_negative_int, help="override netting batch_size; 0 disables size-triggered window close")
     parser.add_argument("--settlement-chunk-size", type=positive_int, help="max intent records per settlement chunk")
     parser.add_argument("--max-window-ms", type=positive_int, help="override netting max_window_duration_ms")
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
@@ -126,7 +129,7 @@ def main() -> int:
         default=1,
         help="seconds between per-run elapsed-time progress refreshes; use 0 to disable",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(normalize_argv(sys.argv[1:]))
 
     repo = REPO_ROOT
     out_root = repo_path(args.out, repo)
@@ -141,8 +144,11 @@ def main() -> int:
         args.tx_number,
         args.tx_speed,
         args.block_limit,
+        args.shard_num,
+        args.node_num,
         args.block_interval_ms,
         args.beacon_block_interval_ms,
+        args.batch_size,
         args.settlement_chunk_size,
         args.max_window_ms,
     )
@@ -242,6 +248,23 @@ def positive_int(raw: str) -> int:
     return value
 
 
+def non_negative_int(raw: str) -> int:
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return value
+
+
+def normalize_argv(argv: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for arg in argv:
+        if "\u00a0" not in arg:
+            normalized.append(arg)
+            continue
+        normalized.extend(arg.replace("\u00a0", " ").split())
+    return normalized
+
+
 def selected_experiments(raw: str) -> set[str]:
     if raw == "all":
         return {f"exp{i}" for i in range(1, 8)}
@@ -272,8 +295,11 @@ def build_specs(
     tx_number_override: Optional[int] = None,
     tx_speed_override: Optional[int] = None,
     block_limit_override: Optional[int] = None,
+    shard_num_override: Optional[int] = None,
+    node_num_override: Optional[int] = None,
     block_interval_ms_override: Optional[int] = None,
     beacon_block_interval_ms_override: Optional[int] = None,
+    batch_size_override: Optional[int] = None,
     settlement_chunk_size_override: Optional[int] = None,
     max_window_ms_override: Optional[int] = None,
 ) -> list[RunSpec]:
@@ -315,6 +341,20 @@ def build_specs(
                     RunSpec(
                         "exp1_baseline",
                         "method",
+                        "netting_static_relay",
+                        method="netting_static_relay",
+                        consensus_type="static_relay",
+                        netting_enabled=True,
+                        workload="dataset",
+                        block_limit=block_limit,
+                        tx_number=tx_number,
+                        tx_speed=tx_speed,
+                        max_window_ms=default_max_window_ms,
+                        seed=seed,
+                    ),
+                    RunSpec(
+                        "exp1_baseline",
+                        "method",
                         "static_relay",
                         method="static_relay",
                         consensus_type="static_relay",
@@ -333,20 +373,6 @@ def build_specs(
                         method="clpa_broker",
                         consensus_type="clpa_broker",
                         netting_enabled=False,
-                        workload="dataset",
-                        block_limit=block_limit,
-                        tx_number=tx_number,
-                        tx_speed=tx_speed,
-                        max_window_ms=default_max_window_ms,
-                        seed=seed,
-                    ),
-                    RunSpec(
-                        "exp1_baseline",
-                        "method",
-                        "netting_static_relay",
-                        method="netting_static_relay",
-                        consensus_type="static_relay",
-                        netting_enabled=True,
                         workload="dataset",
                         block_limit=block_limit,
                         tx_number=tx_number,
@@ -460,8 +486,14 @@ def build_specs(
         specs = [replace(spec, block_interval_ms=block_interval_ms_override) for spec in specs]
     if beacon_block_interval_ms_override is not None:
         specs = [replace(spec, beacon_block_interval_ms=beacon_block_interval_ms_override) for spec in specs]
+    if batch_size_override is not None:
+        specs = [replace(spec, batch_size=batch_size_override) for spec in specs]
     if settlement_chunk_size_override is not None:
         specs = [replace(spec, settlement_chunk_size=settlement_chunk_size_override) for spec in specs]
+    if shard_num_override is not None:
+        specs = [replace(spec, shard_num=shard_num_override) for spec in specs]
+    if node_num_override is not None:
+        specs = [replace(spec, node_num=node_num_override) for spec in specs]
     return specs
 
 
