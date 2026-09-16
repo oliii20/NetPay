@@ -54,6 +54,11 @@ def main() -> int:
     parser.add_argument("--max-window-ms", type=positive_int, default=DEFAULT_MAX_WINDOW_MS)
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
     parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="allow building experiment binaries from a dirty Git worktree",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     parser.add_argument("--progress-interval", type=int, default=1)
@@ -116,6 +121,7 @@ def main() -> int:
     dataset_rows = runner.load_dataset(dataset_path, dataset_tx_number) if dataset_tx_number > 0 else []
     bin_dir = out_dir / "bin"
     if not args.skip_build:
+        runner.require_clean_worktree(repo, args.allow_dirty)
         runner.build_binaries(repo, bin_dir, args.go)
 
     write_repeated_summary_header(summary_path)
@@ -135,7 +141,10 @@ def main() -> int:
         "max_window_ms": args.max_window_ms,
         "gocache": os.environ.get("GOCACHE", ""),
     }
-    (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata["argv"] = sys.argv[1:]
+    metadata["skip_build"] = args.skip_build
+    metadata["allow_dirty"] = args.allow_dirty
+    runner.write_session_metadata(out_dir / "metadata.json", metadata, repo, bin_dir, args.go)
 
     with runs_path.open("w", encoding="utf-8") as runs_fp:
         total = args.repeats * len(specs)

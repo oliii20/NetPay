@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import csv
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -227,6 +228,44 @@ class RunExperimentSummaryTest(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             runner.validate_specs([spec])
+
+    def test_require_clean_worktree_rejects_dirty_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            tracked = repo / "tracked.txt"
+            tracked.write_text("clean\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+            tracked.write_text("dirty\n", encoding="utf-8")
+
+            with self.assertRaises(SystemExit):
+                runner.require_clean_worktree(repo, allow_dirty=False)
+
+            runner.require_clean_worktree(repo, allow_dirty=True)
+
+    def test_require_clean_worktree_ignores_untracked_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            tracked = repo / "tracked.txt"
+            tracked.write_text("clean\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+            (repo / "untracked-output.txt").write_text("plot\n", encoding="utf-8")
+
+            runner.require_clean_worktree(repo, allow_dirty=False)
+
+    def test_binary_manifest_records_missing_binaries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = runner.binary_manifest(Path(tmp), "missing-go-binary-for-test")
+
+        self.assertFalse(manifest["supervisor"]["exists"])
+        self.assertFalse(manifest["consensusnode"]["exists"])
 
 
 if __name__ == "__main__":

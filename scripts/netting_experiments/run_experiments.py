@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -121,6 +122,11 @@ def main() -> int:
     parser.add_argument("--max-window-ms", type=positive_int, help="override netting max_window_duration_ms")
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
     parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="allow building experiment binaries from a dirty Git worktree",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout", type=int, default=500)
     parser.add_argument(
@@ -165,7 +171,35 @@ def main() -> int:
     dataset_tx_number = max((spec.tx_number for spec in specs if spec.workload == "dataset"), default=0)
     dataset_rows = load_dataset(dataset_path, dataset_tx_number) if dataset_tx_number > 0 else []
     if not args.skip_build:
+        require_clean_worktree(repo, args.allow_dirty)
         build_binaries(repo, out_dir / "bin", args.go)
+    write_session_metadata(
+        out_dir / "metadata.json",
+        {
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "argv": sys.argv[1:],
+            "profile": args.profile,
+            "experiments": args.experiments,
+            "seeds": seeds,
+            "dataset": str(dataset_path),
+            "skip_build": args.skip_build,
+            "allow_dirty": args.allow_dirty,
+            "tx_number": args.tx_number,
+            "tx_speed": args.tx_speed,
+            "block_limit": args.block_limit,
+            "shard_num": args.shard_num,
+            "node_num": args.node_num,
+            "block_interval_ms": args.block_interval_ms,
+            "beacon_block_interval_ms": args.beacon_block_interval_ms,
+            "batch_size": args.batch_size,
+            "settlement_chunk_size": args.settlement_chunk_size,
+            "max_window_ms": args.max_window_ms,
+            "gocache": os.environ.get("GOCACHE", ""),
+        },
+        repo,
+        out_dir / "bin",
+        args.go,
+    )
 
     summary_path = out_dir / "summary.csv"
     runs_path = out_dir / "runs.jsonl"
@@ -566,6 +600,120 @@ def is_hex_address(value: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def require_clean_worktree(repo: Path, allow_dirty: bool) -> None:
+    provenance = git_provenance(repo)
+    if not provenance.get("available", False):
+        return
+    if not provenance.get("dirty", False) or allow_dirty:
+        return
+    status = "\n".join(provenance.get("status", []))
+    raise SystemExit(
+        "refusing to build experiment binaries from a dirty Git worktree.\n"
+        "Commit or stash changes first, or pass --allow-dirty to record and accept a dirty build.\n"
+        f"Dirty files:\n{status}"
+    )
+
+
+def git_provenance(repo: Path) -> dict[str, object]:
+    def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=check,
+            capture_output=True,
+            text=True,
+        )
+
+    try:
+        revision = git("rev-parse", "HEAD").stdout.strip()
+        branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        status_lines = [
+            line for line in git("status", "--porcelain", "--untracked-files=no").stdout.splitlines() if line
+        ]
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {"available": False}
+
+    return {
+        "available": True,
+        "revision": revision,
+        "branch": branch,
+        "dirty": bool(status_lines),
+        "status": status_lines,
+    }
+
+
+def write_session_metadata(
+    path: Path,
+    values: dict[str, object],
+    repo: Path,
+    bin_dir: Path,
+    go_cmd: str,
+) -> None:
+    metadata = dict(values)
+    metadata["git"] = git_provenance(repo)
+    metadata["binaries"] = binary_manifest(bin_dir, go_cmd)
+    path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def binary_manifest(bin_dir: Path, go_cmd: str) -> dict[str, object]:
+    manifest: dict[str, object] = {}
+    go_bin: Optional[str]
+    try:
+        go_bin = resolve_go_binary(go_cmd)
+    except SystemExit:
+        go_bin = None
+
+    for name in ["consensusnode", "beaconnode", "solver", "supervisor"]:
+        path = bin_dir / executable_name(name)
+        if not path.exists():
+            manifest[name] = {"exists": False}
+            continue
+        entry: dict[str, object] = {
+            "exists": True,
+            "path": str(path),
+            "size_bytes": path.stat().st_size,
+            "sha256": file_sha256(path),
+        }
+        if go_bin:
+            entry.update(go_binary_build_info(go_bin, path))
+        manifest[name] = entry
+    return manifest
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fp:
+        for chunk in iter(lambda: fp.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def go_binary_build_info(go_bin: str, path: Path) -> dict[str, object]:
+    try:
+        result = subprocess.run(
+            [go_bin, "version", "-m", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {}
+
+    info: dict[str, object] = {"go_version_m": result.stdout.splitlines()}
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(maxsplit=1)
+        if len(fields) != 2:
+            continue
+        key, value = fields
+        if key == "build" and "=" in value:
+            build_key, build_value = value.split("=", 1)
+            if build_key in {"vcs.revision", "vcs.time", "vcs.modified"}:
+                info[build_key.replace(".", "_")] = build_value
+        elif key == "mod":
+            info["module"] = value
+    return info
 
 
 def build_binaries(repo: Path, bin_dir: Path, go_cmd: str) -> None:
