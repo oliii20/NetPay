@@ -29,6 +29,7 @@ DEFAULT_BLOCK_LIMIT = 2000
 DEFAULT_BLOCK_INTERVAL_MS = 2000
 DEFAULT_BEACON_BLOCK_INTERVAL_MS = 500
 DEFAULT_SETTLEMENT_CHUNK_SIZE = 500
+DEFAULT_BATCH_SIZE = 0
 
 
 def main() -> int:
@@ -49,6 +50,7 @@ def main() -> int:
     parser.add_argument("--block-interval-ms", type=positive_int, default=DEFAULT_BLOCK_INTERVAL_MS)
     parser.add_argument("--beacon-block-interval-ms", type=positive_int, default=DEFAULT_BEACON_BLOCK_INTERVAL_MS)
     parser.add_argument("--settlement-chunk-size", type=positive_int, default=DEFAULT_SETTLEMENT_CHUNK_SIZE)
+    parser.add_argument("--batch-size", type=non_negative_int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--max-window-ms", type=positive_int, default=DEFAULT_MAX_WINDOW_MS)
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
     parser.add_argument("--skip-build", action="store_true")
@@ -96,6 +98,7 @@ def main() -> int:
     runner.validate_specs(specs)
     specs = order_netting_first(specs)
     specs = [replace_shard_node_count(spec, args.shard_num, args.node_num) for spec in specs]
+    specs = [runner.replace(spec, batch_size=args.batch_size) for spec in specs]
 
     print(f"session: {out_dir}")
     if args.dry_run:
@@ -124,6 +127,7 @@ def main() -> int:
         "block_limit": args.block_limit,
         "block_interval_ms": args.block_interval_ms,
         "beacon_block_interval_ms": args.beacon_block_interval_ms,
+        "batch_size": args.batch_size,
         "settlement_chunk_size": args.settlement_chunk_size,
         "max_window_ms": args.max_window_ms,
         "gocache": os.environ.get("GOCACHE", ""),
@@ -168,6 +172,13 @@ def positive_int(raw: str) -> int:
     value = int(raw)
     if value <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
+def non_negative_int(raw: str) -> int:
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
     return value
 
 
