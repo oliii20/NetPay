@@ -38,14 +38,6 @@ type Config struct {
 	MaxWindowDuration time.Duration
 }
 
-var batchSizeCheckpoints = []time.Duration{
-	100 * time.Millisecond,
-	500 * time.Millisecond,
-	1000 * time.Millisecond,
-	1500 * time.Millisecond,
-	2000 * time.Millisecond,
-}
-
 type Watermark struct {
 	Height    uint64
 	BlockHash merkle.Hash
@@ -159,10 +151,12 @@ func (m *Manager) TryClose() *FrozenWindow {
 		return nil
 	}
 
-	reason, ready := m.closeReason()
-	if !ready {
+	timeReady := !m.clock.Now().Before(m.openedAt.Add(m.cfg.MaxWindowDuration))
+	if !timeReady {
 		return nil
 	}
+
+	reason := "max_window_duration"
 	window := m.seal(reason)
 	cloned := cloneFrozenWindow(window)
 
@@ -175,27 +169,6 @@ func (m *Manager) PendingIntentCount() int {
 
 func (m *Manager) FrozenWindowCount() int {
 	return len(m.frozen)
-}
-
-func (m *Manager) closeReason() (string, bool) {
-	now := m.clock.Now()
-	elapsed := now.Sub(*m.openedAt)
-	if elapsed >= m.cfg.MaxWindowDuration {
-		return "max_window_duration", true
-	}
-	if m.cfg.BatchSize <= 0 || len(m.pending) <= m.cfg.BatchSize {
-		return "", false
-	}
-	for _, checkpoint := range batchSizeCheckpoints {
-		if checkpoint >= m.cfg.MaxWindowDuration {
-			continue
-		}
-		if elapsed >= checkpoint {
-			return "checkpoint_batch_size", true
-		}
-	}
-
-	return "", false
 }
 
 func (m *Manager) Watermark(shardID int64) (Watermark, error) {
