@@ -11,6 +11,8 @@ import (
 
 type packTxFunc func(q []transaction.Transaction, n int) ([]transaction.Transaction, []transaction.Transaction, error)
 
+const maxHeavyNettingTxsPerNumBlock = 512
+
 type TxPool struct {
 	queue []transaction.Transaction
 	pf    packTxFunc
@@ -88,6 +90,8 @@ func packTxsByGivenNum(
 
 	selected := make([]bool, len(q))
 	packed := make([]transaction.Transaction, 0, min(n, len(q)))
+	heavyNettingLimit := min(n, maxHeavyNettingTxsPerNumBlock)
+	heavyNettingCount := 0
 	for idx := range q {
 		if len(packed) == n {
 			break
@@ -95,8 +99,14 @@ func packTxsByGivenNum(
 		if !isPriorityTx(q[idx]) {
 			continue
 		}
+		if isHeavyNettingTx(q[idx]) && heavyNettingCount == heavyNettingLimit {
+			continue
+		}
 		packed = append(packed, q[idx])
 		selected[idx] = true
+		if isHeavyNettingTx(q[idx]) {
+			heavyNettingCount++
+		}
 	}
 	for idx := range q {
 		if len(packed) == n {
@@ -105,8 +115,14 @@ func packTxsByGivenNum(
 		if selected[idx] {
 			continue
 		}
+		if isHeavyNettingTx(q[idx]) && heavyNettingCount == heavyNettingLimit {
+			continue
+		}
 		packed = append(packed, q[idx])
 		selected[idx] = true
+		if isHeavyNettingTx(q[idx]) {
+			heavyNettingCount++
+		}
 	}
 
 	return packed, remainingTxs(q, selected), nil
@@ -185,6 +201,15 @@ func remainingTxs(q []transaction.Transaction, selected []bool) []transaction.Tr
 func isPriorityTx(tx transaction.Transaction) bool {
 	switch tx.TxType() {
 	case transaction.SettlementTxType, transaction.ReservedFallbackTxType, transaction.FallbackCompletedTxType:
+		return true
+	default:
+		return false
+	}
+}
+
+func isHeavyNettingTx(tx transaction.Transaction) bool {
+	switch tx.TxType() {
+	case transaction.SettlementTxType, transaction.ReservedFallbackTxType:
 		return true
 	default:
 		return false

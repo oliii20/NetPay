@@ -18,6 +18,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/solver"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/window"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network/rpcserver"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
@@ -68,6 +69,9 @@ func TestSolverBootstrapsBuildsAndRestoresBatch(t *testing.T) {
 	restarted, err := solver.New(cfg, conn, resolver, store)
 	require.NoError(t, err)
 	require.Equal(t, pending, restarted.PendingBatchIDs())
+	duplicate := solverReceipt(0, solverHash(0x11), solverHash(0x12), solverPayment(0, 1, 10))
+	duplicate.Height = 2
+	require.ErrorIs(t, restarted.HandleReceipt(message.FinalizedBlockReceiptMsg{Receipt: duplicate}), window.ErrDuplicateIntent)
 	require.NoError(t, restarted.HandleFinalized(context.Background(), message.MatchRootFinalizedMsg{
 		NodeID: 0, Header: proposal.Header,
 	}))

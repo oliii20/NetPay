@@ -240,6 +240,10 @@ func matchExact(group *matchGroup) []Allocation {
 }
 
 func matchRemaining(group *matchGroup, allowSplit bool) ([]Allocation, error) {
+	if allowSplit {
+		return matchCountGreedySplit(group)
+	}
+
 	lowerTotal := sumRemaining(group.lowerToHigher)
 	higherTotal := sumRemaining(group.higherToLower)
 
@@ -254,13 +258,7 @@ func matchRemaining(group *matchGroup, allowSplit bool) ([]Allocation, error) {
 
 	active = positiveRemaining(active)
 	counter = positiveRemaining(counter)
-	sort.Slice(active, func(i, j int) bool {
-		cmp := active[i].remaining.Cmp(active[j].remaining)
-		if cmp != 0 {
-			return cmp > 0
-		}
-		return compareID(active[i].id, active[j].id) < 0
-	})
+	sortItemsByAmountThenID(active)
 
 	tree := btree.NewG(btreeDegree, lessWorkItem)
 	for _, item := range counter {
@@ -283,28 +281,38 @@ func matchRemaining(group *matchGroup, allowSplit bool) ([]Allocation, error) {
 			}
 			continue
 		}
+	}
 
-		if !allowSplit {
+	return allocations, nil
+}
+
+func matchCountGreedySplit(group *matchGroup) ([]Allocation, error) {
+	lower := positiveRemaining(group.lowerToHigher)
+	higher := positiveRemaining(group.higherToLower)
+	sortItemsByAmountThenID(lower)
+	sortItemsByAmountThenID(higher)
+
+	allocations := make([]Allocation, 0)
+	lowerIdx, higherIdx := 0, 0
+	for lowerIdx < len(lower) && higherIdx < len(higher) {
+		lowerItem := lower[lowerIdx]
+		higherItem := higher[higherIdx]
+		if lowerItem.remaining.Sign() == 0 {
+			lowerIdx++
+			continue
+		}
+		if higherItem.remaining.Sign() == 0 {
+			higherIdx++
 			continue
 		}
 
-		for activeItem.remaining.Sign() > 0 {
-			candidate = largestAmountSmallestID(tree)
-			if candidate == nil {
-				return nil, fmt.Errorf("%w: counter tree exhausted", ErrMatchingInvariant)
-			}
-			if err := deleteItem(tree, candidate); err != nil {
-				return nil, err
-			}
-
-			amount := minBig(activeItem.remaining, candidate.remaining)
-			allocations = append(
-				allocations,
-				allocateByDirection(group.key, activeItem, candidate, amount, SplitPhase, activeIsLower),
-			)
-			if candidate.remaining.Sign() > 0 {
-				tree.ReplaceOrInsert(candidate)
-			}
+		amount := minBig(lowerItem.remaining, higherItem.remaining)
+		allocations = append(allocations, allocate(group.key, lowerItem, higherItem, amount, SplitPhase))
+		if lowerItem.remaining.Sign() == 0 {
+			lowerIdx++
+		}
+		if higherItem.remaining.Sign() == 0 {
+			higherIdx++
 		}
 	}
 
@@ -371,6 +379,16 @@ func sortItemsByID(items []*workItem) {
 	sort.Slice(items, func(i, j int) bool { return compareID(items[i].id, items[j].id) < 0 })
 }
 
+func sortItemsByAmountThenID(items []*workItem) {
+	sort.Slice(items, func(i, j int) bool {
+		cmp := items[i].remaining.Cmp(items[j].remaining)
+		if cmp != 0 {
+			return cmp < 0
+		}
+		return compareID(items[i].id, items[j].id) < 0
+	})
+}
+
 func positiveRemaining(items []*workItem) []*workItem {
 	result := make([]*workItem, 0, len(items))
 	for _, item := range items {
@@ -406,15 +424,6 @@ func lowerBound(tree *btree.BTreeG[*workItem], amount *big.Int) *workItem {
 	})
 
 	return found
-}
-
-func largestAmountSmallestID(tree *btree.BTreeG[*workItem]) *workItem {
-	maximum, exists := tree.Max()
-	if !exists {
-		return nil
-	}
-
-	return lowerBound(tree, maximum.remaining)
 }
 
 func deleteItem(tree *btree.BTreeG[*workItem], item *workItem) error {

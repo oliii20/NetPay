@@ -30,30 +30,8 @@ func ExecuteCredit(
 	item model.ReservedFallback,
 	confirmed model.MatchRootBlockBody,
 ) error {
-	if item.DestinationShard != shardID {
-		return ErrFallbackWrongShard
-	}
-	if !reflect.DeepEqual(item.Proof.Header, confirmed) || item.BatchID != confirmed.BatchID {
-		return ErrFallbackProof
-	}
-	if err := batch.VerifySettlementPackage(item.Proof); err != nil {
-		return ErrFallbackProof
-	}
-	var matched bool
-	for _, result := range item.Proof.Settlement.Outgoing {
-		if result.IntentID != item.IntentID {
-			continue
-		}
-		if result.FallbackAmount.Cmp(item.Amount) != 0 || result.Intent.Sender != item.Sender ||
-			result.Intent.Recipient != item.Recipient || result.Intent.SourceShard != item.SourceShard ||
-			result.Intent.DestinationShard != item.DestinationShard {
-			return ErrFallbackProof
-		}
-		matched = true
-		break
-	}
-	if !matched || item.Amount == nil || item.Amount.Sign() <= 0 {
-		return ErrFallbackProof
+	if err := VerifyCreditProof(shardID, item, confirmed); err != nil {
+		return err
 	}
 	key := recordKey(item.Key())
 	if stateDB.GetState(storageAddress(), executedSlot(key)) != (common.Hash{}) {
@@ -72,6 +50,42 @@ func ExecuteCredit(
 		stateDB.SetNonce(storageAddress(), 1, tracing.NonceChangeUnspecified)
 	}
 	stateDB.SetState(storageAddress(), executedSlot(key), common.BigToHash(big.NewInt(1)))
+
+	return nil
+}
+
+func VerifyCreditProof(shardID int64, item model.ReservedFallback, confirmed model.MatchRootBlockBody) error {
+	if item.DestinationShard != shardID {
+		return ErrFallbackWrongShard
+	}
+	if item.Amount == nil || item.Amount.Sign() <= 0 {
+		return ErrFallbackProof
+	}
+	if !reflect.DeepEqual(item.Proof.Header, confirmed) || item.BatchID != confirmed.BatchID {
+		return ErrFallbackProof
+	}
+	if err := batch.VerifySettlementPackage(item.Proof); err != nil {
+		return ErrFallbackProof
+	}
+	var matched bool
+	for _, result := range item.Proof.Settlement.Outgoing {
+		if result.IntentID != item.IntentID {
+			continue
+		}
+		if result.FallbackAmount == nil {
+			return ErrFallbackProof
+		}
+		if result.FallbackAmount.Cmp(item.Amount) != 0 || result.Intent.Sender != item.Sender ||
+			result.Intent.Recipient != item.Recipient || result.Intent.SourceShard != item.SourceShard ||
+			result.Intent.DestinationShard != item.DestinationShard {
+			return ErrFallbackProof
+		}
+		matched = true
+		break
+	}
+	if !matched {
+		return ErrFallbackProof
+	}
 
 	return nil
 }

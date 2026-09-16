@@ -54,6 +54,40 @@ func TestPackTxsPrioritizesNettingLifecycleTransactions(t *testing.T) {
 	require.Equal(t, []uint64{1, 2, 3}, txNonces(packed))
 }
 
+func TestPackTxsCapsHeavyNettingLifecycleTransactions(t *testing.T) {
+	t.Parallel()
+
+	pool, err := NewTxPool(config.TxPoolCfg{Type: config.TxPoolNumType})
+	require.NoError(t, err)
+
+	txs := make([]transaction.Transaction, 0, maxHeavyNettingTxsPerNumBlock+5)
+	for idx := 0; idx < maxHeavyNettingTxsPerNumBlock+2; idx++ {
+		txs = append(txs, settlementTx(byte(idx)))
+	}
+	txs = append(txs, normalTx(100), normalTx(101), normalTx(102))
+	require.NoError(t, pool.AddTxs(txs))
+
+	packed, err := pool.PackTxs(maxHeavyNettingTxsPerNumBlock + 3)
+	require.NoError(t, err)
+	require.Len(t, packed, maxHeavyNettingTxsPerNumBlock+3)
+	require.Equal(t, maxHeavyNettingTxsPerNumBlock, countTxType(packed, transaction.SettlementTxType))
+	require.Equal(t, []uint64{100, 101, 102}, txNonces(normalTxs(packed)))
+
+	packed, err = pool.PackTxs(10)
+	require.NoError(t, err)
+	require.Len(t, packed, 2)
+	require.Equal(t, 2, countTxType(packed, transaction.SettlementTxType))
+}
+
+func settlementTx(id byte) transaction.Transaction {
+	return *transaction.NewSettlementTransaction(model.SettlementPackage{
+		Header: model.MatchRootBlockBody{BatchID: merkle.Hash{id}},
+		Settlement: model.ShardSettlement{
+			BatchID: merkle.Hash{id}, ShardID: 1, ChunkCount: 1,
+		},
+	}, time.Unix(int64(id), 0))
+}
+
 func normalTx(nonce uint64) transaction.Transaction {
 	tx := transaction.NewTransaction(
 		account.Address{}, account.Address{}, big.NewInt(1), big.NewInt(0), nonce, time.Unix(int64(nonce), 0),
@@ -69,6 +103,28 @@ func txTypes(txs []transaction.Transaction) []byte {
 	}
 
 	return types
+}
+
+func countTxType(txs []transaction.Transaction, txType byte) int {
+	count := 0
+	for idx := range txs {
+		if txs[idx].TxType() == txType {
+			count++
+		}
+	}
+
+	return count
+}
+
+func normalTxs(txs []transaction.Transaction) []transaction.Transaction {
+	filtered := make([]transaction.Transaction, 0)
+	for idx := range txs {
+		if txs[idx].TxType() == transaction.NormalTxType {
+			filtered = append(filtered, txs[idx])
+		}
+	}
+
+	return filtered
 }
 
 func txNonces(txs []transaction.Transaction) []uint64 {

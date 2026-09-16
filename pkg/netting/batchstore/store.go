@@ -4,14 +4,17 @@ package batchstore
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"go.etcd.io/bbolt"
 
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/window"
@@ -22,6 +25,7 @@ var ErrProposalNotFound = errors.New("batch proposal not found")
 var (
 	stateBucket    = []byte("solver_state")
 	proposalBucket = []byte("batch_proposals")
+	assignedBucket = []byte("assigned_intents")
 	stateKey       = []byte("current")
 )
 
@@ -64,57 +68,133 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) SaveState(state SolverState) error {
-	encoded, err := encode(state)
-	if err != nil {
-		return fmt.Errorf("encode solver state: %w", err)
-	}
-
 	return s.db.Update(func(tx *bbolt.Tx) error {
-		if err := tx.Bucket(stateBucket).Put(stateKey, encoded); err != nil {
-			return fmt.Errorf("save solver state: %w", err)
-		}
-		return nil
+		return writeState(tx, state, false)
+	})
+}
+
+// SaveCheckpoint merges newly assigned intents with the durable history.
+func (s *Store) SaveCheckpoint(state SolverState) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		return writeState(tx, state, true)
 	})
 }
 
 func (s *Store) PutProposalAndState(proposal model.BatchProposal, state SolverState) error {
+	return s.putProposal(proposal, state, false)
+}
+
+func (s *Store) PutProposalAndCheckpoint(proposal model.BatchProposal, state SolverState) error {
+	return s.putProposal(proposal, state, true)
+}
+
+func (s *Store) putProposal(proposal model.BatchProposal, state SolverState, incremental bool) error {
 	proposalBytes, err := encode(proposal)
 	if err != nil {
 		return fmt.Errorf("encode batch proposal: %w", err)
 	}
-	stateBytes, err := encode(state)
-	if err != nil {
-		return fmt.Errorf("encode solver state: %w", err)
-	}
-
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		if err := tx.Bucket(proposalBucket).Put(proposal.Header.BatchID[:], proposalBytes); err != nil {
 			return fmt.Errorf("save batch proposal: %w", err)
 		}
-		if err := tx.Bucket(stateBucket).Put(stateKey, stateBytes); err != nil {
-			return fmt.Errorf("save solver state: %w", err)
-		}
-		return nil
+		return writeState(tx, state, incremental)
 	})
 }
 
+func writeState(tx *bbolt.Tx, state SolverState, incremental bool) error {
+	if !incremental && tx.Bucket(assignedBucket) != nil {
+		if err := tx.DeleteBucket(assignedBucket); err != nil {
+			return fmt.Errorf("replace assigned intents: %w", err)
+		}
+	}
+	assignments := tx.Bucket(assignedBucket)
+	if assignments == nil {
+		var err error
+		assignments, err = tx.CreateBucket(assignedBucket)
+		if err != nil {
+			return fmt.Errorf("create assigned intents: %w", err)
+		}
+		// Old databases kept the complete history inside the gob snapshot.
+		if incremental {
+			if previous := tx.Bucket(stateBucket).Get(stateKey); previous != nil {
+				var legacy SolverState
+				if err = decode(previous, &legacy); err != nil {
+					return fmt.Errorf("decode legacy solver state: %w", err)
+				}
+				if legacy.ManagerState != nil {
+					if err = writeAssignments(assignments, legacy.ManagerState.Assigned); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	if state.ManagerState != nil {
+		if err := writeAssignments(assignments, state.ManagerState.Assigned); err != nil {
+			return err
+		}
+		managerState := *state.ManagerState
+		managerState.Assigned = nil
+		state.ManagerState = &managerState
+	}
+	encoded, err := encode(state)
+	if err != nil {
+		return fmt.Errorf("encode solver state: %w", err)
+	}
+	if err = tx.Bucket(stateBucket).Put(stateKey, encoded); err != nil {
+		return fmt.Errorf("save solver state: %w", err)
+	}
+	return nil
+}
+
+func writeAssignments(bucket *bbolt.Bucket, assigned map[intent.ID]uint64) error {
+	ids := make([]intent.ID, 0, len(assigned))
+	for id := range assigned {
+		ids = append(ids, id)
+	}
+	// Ordered inserts avoid repeatedly shifting large Bolt leaf nodes on migration.
+	sort.Slice(ids, func(i, j int) bool { return bytes.Compare(ids[i][:], ids[j][:]) < 0 })
+	for _, id := range ids {
+		windowID := assigned[id]
+		value := binary.BigEndian.AppendUint64(nil, windowID)
+		if err := bucket.Put(id[:], value); err != nil {
+			return fmt.Errorf("save assigned intent: %w", err)
+		}
+	}
+	return nil
+}
+
 func (s *Store) LoadState() (SolverState, bool, error) {
-	var encoded []byte
+	var state SolverState
+	var found bool
 	if err := s.db.View(func(tx *bbolt.Tx) error {
-		encoded = bytes.Clone(tx.Bucket(stateBucket).Get(stateKey))
+		encoded := tx.Bucket(stateBucket).Get(stateKey)
+		if len(encoded) == 0 {
+			return nil
+		}
+		found = true
+		if err := decode(encoded, &state); err != nil {
+			return fmt.Errorf("decode solver state: %w", err)
+		}
+		if bucket := tx.Bucket(assignedBucket); bucket != nil && state.ManagerState != nil {
+			if state.ManagerState.Assigned == nil {
+				state.ManagerState.Assigned = make(map[intent.ID]uint64)
+			}
+			return bucket.ForEach(func(key, value []byte) error {
+				var id intent.ID
+				if len(key) != len(id) || len(value) != 8 {
+					return fmt.Errorf("invalid assigned intent record")
+				}
+				copy(id[:], key)
+				state.ManagerState.Assigned[id] = binary.BigEndian.Uint64(value)
+				return nil
+			})
+		}
 		return nil
 	}); err != nil {
 		return SolverState{}, false, fmt.Errorf("load solver state: %w", err)
 	}
-	if len(encoded) == 0 {
-		return SolverState{}, false, nil
-	}
-	var state SolverState
-	if err := decode(encoded, &state); err != nil {
-		return SolverState{}, false, fmt.Errorf("decode solver state: %w", err)
-	}
-
-	return state, true, nil
+	return state, found, nil
 }
 
 func (s *Store) GetProposal(id merkle.Hash) (model.BatchProposal, error) {

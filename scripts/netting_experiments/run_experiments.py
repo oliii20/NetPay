@@ -63,6 +63,7 @@ class RunSpec:
     method: str = "netting_static_relay"
     consensus_type: str = "static_relay"
     netting_enabled: bool = True
+    simplified_settlement: bool = True
     matcher_mode: str = "full"
     workload: str = "dataset"
     tx_number: int = 120
@@ -1013,6 +1014,7 @@ consensus_node:
 netting:
   enabled: {str(spec.netting_enabled).lower()}
   metrics_enabled: true
+  simplified_settlement: {str(spec.simplified_settlement).lower()}
   batch_size: {spec.batch_size}
   settlement_chunk_size: {spec.settlement_chunk_size}
   max_window_duration_ms: {spec.max_window_ms}

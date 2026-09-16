@@ -45,7 +45,7 @@ func TestManagerClosesOnlyAfterMaxWindowDurationWithVectorCut(t *testing.T) {
 	t.Parallel()
 
 	clock := newFakeClock()
-	manager := newManager(t, window.Config{ShardCount: 3, BatchSize: 3, MaxWindowDuration: time.Minute}, clock)
+	manager := newManager(t, window.Config{ShardCount: 3, BatchSize: 10, MaxWindowDuration: time.Minute}, clock)
 
 	sealed, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1, 2))
 	require.NoError(t, err)
@@ -98,13 +98,30 @@ func TestManagerDoesNotStartTimerForEmptyBlocks(t *testing.T) {
 	require.Len(t, sealed.Receipts, 2)
 }
 
-func TestWindowCanExceedBatchSizeUntilDuration(t *testing.T) {
+func TestManagerClosesWhenBatchSizeReached(t *testing.T) {
 	t.Parallel()
 
 	clock := newFakeClock()
 	manager := newManager(
 		t,
 		window.Config{ShardCount: 2, BatchSize: 2, MaxWindowDuration: time.Minute},
+		clock,
+	)
+	sealed, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1, 2, 3))
+	require.NoError(t, err)
+	require.NotNil(t, sealed)
+	require.Equal(t, "batch_size", sealed.CloseReason)
+	require.Len(t, sealed.Intents, 3)
+	require.Zero(t, manager.PendingIntentCount())
+}
+
+func TestManagerDisablesBatchSizeCloseWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	clock := newFakeClock()
+	manager := newManager(
+		t,
+		window.Config{ShardCount: 2, BatchSize: 0, MaxWindowDuration: time.Minute},
 		clock,
 	)
 	sealed, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1, 2, 3))
@@ -125,7 +142,7 @@ func TestBufferedCatchUpSealsOnceWhenDurationExpires(t *testing.T) {
 	clock := newFakeClock()
 	manager := newManager(
 		t,
-		window.Config{ShardCount: 2, BatchSize: 1, MaxWindowDuration: time.Minute},
+		window.Config{ShardCount: 2, BatchSize: 10, MaxWindowDuration: time.Minute},
 		clock,
 	)
 	block2Hash := testHash(0x11)
@@ -157,7 +174,7 @@ func TestSuccessiveWindowsUsePreviousVectorCut(t *testing.T) {
 	clock := newFakeClock()
 	manager := newManager(
 		t,
-		window.Config{ShardCount: 2, BatchSize: 1, MaxWindowDuration: time.Minute},
+		window.Config{ShardCount: 2, BatchSize: 10, MaxWindowDuration: time.Minute},
 		clock,
 	)
 	first, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1))
@@ -302,6 +319,27 @@ func TestManagerRejectsPreviouslyAssignedIntent(t *testing.T) {
 
 	second := testReceipt(0, 3, testHash(0x11), testHash(0x12))
 	second.Intents = append(second.Intents, first.Intents[0])
+	_, err = manager.AddReceipt(second)
+	require.ErrorIs(t, err, window.ErrDuplicateIntent)
+}
+
+func TestCheckpointKeepsDuplicateProtectionAfterAcknowledgement(t *testing.T) {
+	clock := newFakeClock()
+	manager := newManager(t, window.Config{ShardCount: 2, MaxWindowDuration: time.Minute}, clock)
+	first := testReceipt(0, 2, testHash(0x10), testHash(0x11), 1)
+	_, err := manager.AddReceipt(first)
+	require.NoError(t, err)
+	clock.Advance(time.Minute)
+	require.NotNil(t, manager.TryClose())
+	checkpoint := manager.Checkpoint()
+	require.Len(t, checkpoint.Assigned, 1)
+	require.Equal(t, checkpoint, manager.Checkpoint())
+	manager.AcknowledgeCheckpoint()
+	require.Empty(t, manager.Checkpoint().Assigned)
+	require.Len(t, manager.Snapshot().Assigned, 1)
+	require.Len(t, checkpoint.Assigned, 1)
+	second := testReceipt(0, 3, testHash(0x11), testHash(0x12))
+	second.Intents = first.Intents
 	_, err = manager.AddReceipt(second)
 	require.ErrorIs(t, err, window.ErrDuplicateIntent)
 }

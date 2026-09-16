@@ -119,6 +119,49 @@ func TestSettlementRejectsUnconfirmedOrTamperedPackage(t *testing.T) {
 	require.ErrorContains(t, err, "invalid settlement proof")
 }
 
+func TestSimplifiedSettlementSkipsReservationStateMachine(t *testing.T) {
+	ctx := context.Background()
+	shard0 := newSimplifiedSettlementTestChain(t, 0)
+	shard1 := newSimplifiedSettlementTestChain(t, 1)
+	forward := settlementIntent(0, 1, 10, 0x61, 0x71)
+	reverse := settlementIntent(1, 0, 7, 0x62, 0x72)
+	proposal, err := (batch.Builder{}).Build(window.FrozenWindow{
+		WindowID: 1,
+		Cuts:     []model.ShardCut{{ShardID: 0}, {ShardID: 1}},
+		Intents:  []intent.PaymentIntent{forward, reverse},
+	}, merkle.Hash{})
+	require.NoError(t, err)
+	packages, err := batch.BuildSettlementPackages(proposal)
+	require.NoError(t, err)
+	require.NoError(t, shard0.ConfirmMatchRoot(ctx, proposal.Header))
+	require.NoError(t, shard1.ConfirmMatchRoot(ctx, proposal.Header))
+
+	for _, pack := range packages {
+		chain := shard0
+		if pack.Settlement.ShardID == 1 {
+			chain = shard1
+		}
+		tx := transaction.NewSettlementTransaction(pack, time.Now())
+		settlementBlock, blockErr := chain.GenerateBlock(
+			ctx, testMiner, block.TxBlockType,
+			block.Body{TxList: []transaction.Transaction{*tx}}, block.MigrationOpt{},
+		)
+		require.NoError(t, blockErr)
+		require.NoError(t, chain.AddBlock(ctx, settlementBlock))
+	}
+
+	_, err = shard0.GetReservation(ctx, forward)
+	require.ErrorIs(t, err, registry.ErrReservationNotFound)
+
+	complete := transaction.NewFallbackCompletedTransaction(model.FallbackKey{BatchID: proposal.Header.BatchID}, time.Now())
+	completionBlock, err := shard0.GenerateBlock(
+		ctx, testMiner, block.TxBlockType,
+		block.Body{TxList: []transaction.Transaction{*complete}}, block.MigrationOpt{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, shard0.AddBlock(ctx, completionBlock))
+}
+
 func TestSettlementAcceptsFullyUnmatchedDirection(t *testing.T) {
 	ctx := context.Background()
 	shard0 := newSettlementTestChain(t, 0)
@@ -163,6 +206,19 @@ func newSettlementTestChain(t *testing.T, shardID int64) *Chain {
 	t.Helper()
 	cfg := getTestConfig()
 	cfg.ChainID = 11
+	cfg.BoltCfg.FilePathDir = t.TempDir()
+	chain, err := NewChain(cfg, config.LocalParams{ShardID: shardID})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, chain.Close()) })
+
+	return chain
+}
+
+func newSimplifiedSettlementTestChain(t *testing.T, shardID int64) *Chain {
+	t.Helper()
+	cfg := getTestConfig()
+	cfg.ChainID = 11
+	cfg.SimplifiedSettlement = true
 	cfg.BoltCfg.FilePathDir = t.TempDir()
 	chain, err := NewChain(cfg, config.LocalParams{ShardID: shardID})
 	require.NoError(t, err)

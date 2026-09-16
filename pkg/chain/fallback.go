@@ -48,10 +48,16 @@ func (c *Chain) fallbackTxExecute(v *vm.Executor, tx transaction.Transaction) er
 		if !exists {
 			return fallback.ErrFallbackProof
 		}
+		if c.cfg.SimplifiedSettlement {
+			return fallback.VerifyCreditProof(c.shardID, *item, confirmed)
+		}
 		return fallback.ExecuteCredit(v.StateDB(), c.shardID, *item, confirmed)
 	case transaction.FallbackCompletedTxType:
 		if tx.FallbackCompleted == nil || tx.ReservedFallback != nil || tx.Value == nil || tx.Value.Sign() != 0 {
 			return fallback.ErrInvalidFallback
+		}
+		if c.cfg.SimplifiedSettlement {
+			return nil
 		}
 		return fallback.NewOutbox(v.StateDB()).Complete(*tx.FallbackCompleted)
 	default:

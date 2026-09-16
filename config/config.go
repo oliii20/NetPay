@@ -67,6 +67,7 @@ func LoadConfig(path string) (*Config, error) {
 	// pass the global system config to the consensus config
 	cfg.ConsensusNodeCfg.SystemCfg = cfg.GlobalSys
 	cfg.ConsensusNodeCfg.NettingCfg = cfg.NettingCfg
+	cfg.ConsensusNodeCfg.BlockchainCfg.SimplifiedSettlement = cfg.NettingCfg.SimplifiedSettlement
 
 	return cfg, nil
 }

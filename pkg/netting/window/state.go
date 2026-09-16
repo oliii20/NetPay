@@ -48,29 +48,45 @@ func Restore(cfg Config, clock Clock, state State) (*Manager, error) {
 	}
 
 	return &Manager{
-		cfg:          cfg,
-		clock:        clock,
-		nextWindowID: cloned.NextWindowID,
-		openedAt:     cloned.OpenedAt,
-		pending:      cloned.Pending,
-		assigned:     cloned.Assigned,
-		lastAssigned: cloned.LastAssigned,
-		streams:      streams,
-		frozen:       cloned.Frozen,
+		cfg:           cfg,
+		clock:         clock,
+		nextWindowID:  cloned.NextWindowID,
+		openedAt:      cloned.OpenedAt,
+		pending:       cloned.Pending,
+		assigned:      cloned.Assigned,
+		dirtyAssigned: make(map[intent.ID]uint64),
+		lastAssigned:  cloned.LastAssigned,
+		streams:       streams,
+		frozen:        cloned.Frozen,
 	}, nil
 }
 
 func (m *Manager) Snapshot() State {
+	return m.snapshot(m.assigned)
+}
+
+// Checkpoint includes only assignments since the last acknowledged checkpoint.
+// The other fields remain a complete recovery snapshot.
+func (m *Manager) Checkpoint() State {
+	return m.snapshot(m.dirtyAssigned)
+}
+
+// AcknowledgeCheckpoint must only follow a successful durable checkpoint write.
+func (m *Manager) AcknowledgeCheckpoint() {
+	clear(m.dirtyAssigned)
+}
+
+func (m *Manager) snapshot(assigned map[intent.ID]uint64) State {
 	streams := make(map[int64]StreamState, len(m.streams))
 	for shardID, stream := range m.streams {
-		streams[shardID] = cloneStreamState(*stream)
+		streams[shardID] = *stream
 	}
 
 	return cloneState(State{
 		NextWindowID: m.nextWindowID,
 		OpenedAt:     m.openedAt,
 		Pending:      m.pending,
-		Assigned:     m.assigned,
+		Assigned:     assigned,
 		LastAssigned: m.lastAssigned,
 		Streams:      streams,
 		Frozen:       m.frozen,

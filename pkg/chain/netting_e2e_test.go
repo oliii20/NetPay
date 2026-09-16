@@ -45,7 +45,7 @@ func TestNettingPipelineAcrossFourShards(t *testing.T) {
 	}
 	clock := &nettingE2EClock{now: time.Unix(2, 0)}
 	manager, err := window.New(window.Config{
-		ShardCount: 4, BatchSize: len(payments), MaxWindowDuration: time.Minute,
+		ShardCount: 4, BatchSize: 0, MaxWindowDuration: time.Minute,
 	}, clock, checkpoints)
 	require.NoError(t, err)
 

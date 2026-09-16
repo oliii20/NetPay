@@ -217,6 +217,7 @@ func (c *Collector) batch(id merkle.Hash) *batchRecord {
 }
 
 func (c *Collector) batchRows() [][]string {
+	aggregates := c.aggregateBatches()
 	records := make([]*batchRecord, 0, len(c.batches))
 	for _, record := range c.batches {
 		records = append(records, record)
@@ -227,8 +228,11 @@ func (c *Collector) batchRows() [][]string {
 		batch := record.batch
 		beacon := record.beacon
 		batchID := record.id
-		settlementLatency, fallbackLatency, endToEnd := c.batchLatencies(batchID)
-		reads, writes, proofTime := c.batchExecution(batchID)
+		aggregate := aggregates[batchID]
+		settlementLatency := average(aggregate.settlement, aggregate.settlementCount)
+		fallbackLatency := average(aggregate.fallback, aggregate.fallbackCount)
+		endToEnd := average(aggregate.endToEnd, aggregate.completedCount)
+		reads, writes, proofTime := aggregate.reads, aggregate.writes, aggregate.proofTime
 		rows = append(rows, []string{
 			strconv.FormatUint(windowID(record), 10), batchID.String(), batch.CloseReason,
 			strconv.Itoa(batch.IntentCount), shardCounts(batch.Shards), cutHeights(batch.Shards),
@@ -277,43 +281,35 @@ func (c *Collector) intentRows() [][]string {
 	return rows
 }
 
-func (c *Collector) batchLatencies(id merkle.Hash) (time.Duration, time.Duration, time.Duration) {
-	var settlement, fallback, endToEnd time.Duration
-	var settlementCount, fallbackCount, completedCount int
-	for _, record := range c.intents {
-		if record.batchID != id {
-			continue
-		}
-		if validInterval(record.reservedAt, record.settledAt) {
-			settlement += record.settledAt.Sub(record.reservedAt)
-			settlementCount++
-		}
-		if validInterval(record.settledAt, record.fallbackAt) {
-			fallback += record.fallbackAt.Sub(record.settledAt)
-			fallbackCount++
-		}
-		if validInterval(record.createdAt, record.completedAt) {
-			endToEnd += record.completedAt.Sub(record.createdAt)
-			completedCount++
-		}
-	}
-
-	return average(settlement, settlementCount), average(fallback, fallbackCount), average(endToEnd, completedCount)
+type batchAggregate struct {
+	settlement, fallback, endToEnd                 time.Duration
+	settlementCount, fallbackCount, completedCount int
+	reads, writes                                  int64
+	proofTime                                      time.Duration
 }
 
-func (c *Collector) batchExecution(id merkle.Hash) (int64, int64, time.Duration) {
-	var reads, writes int64
-	var proofTime time.Duration
+func (c *Collector) aggregateBatches() map[merkle.Hash]batchAggregate {
+	aggregates := make(map[merkle.Hash]batchAggregate, len(c.batches))
 	for _, record := range c.intents {
-		if record.batchID != id {
-			continue
+		aggregate := aggregates[record.batchID]
+		if validInterval(record.reservedAt, record.settledAt) {
+			aggregate.settlement += record.settledAt.Sub(record.reservedAt)
+			aggregate.settlementCount++
 		}
-		reads += record.reads
-		writes += record.writes
-		proofTime += record.proofTime
+		if validInterval(record.settledAt, record.fallbackAt) {
+			aggregate.fallback += record.fallbackAt.Sub(record.settledAt)
+			aggregate.fallbackCount++
+		}
+		if validInterval(record.createdAt, record.completedAt) {
+			aggregate.endToEnd += record.completedAt.Sub(record.createdAt)
+			aggregate.completedCount++
+		}
+		aggregate.reads += record.reads
+		aggregate.writes += record.writes
+		aggregate.proofTime += record.proofTime
+		aggregates[record.batchID] = aggregate
 	}
-
-	return reads, writes, proofTime
+	return aggregates
 }
 
 func decode(wrapped *rpcserver.WrappedMsg, target any) error {

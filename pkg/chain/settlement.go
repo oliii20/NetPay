@@ -62,7 +62,8 @@ func (c *Chain) settlementTxExecute(v *vm.Executor, tx transaction.Transaction) 
 	if !exists {
 		return settlement.ErrUnknownMatchRoot
 	}
-	if err := (settlement.Executor{}).Execute(v.StateDB(), c.shardID, *tx.Settlement, confirmed); err != nil {
+	if err := (settlement.Executor{Simplified: c.cfg.SimplifiedSettlement}).
+		Execute(v.StateDB(), c.shardID, *tx.Settlement, confirmed); err != nil {
 		return fmt.Errorf("execute settlement package: %w", err)
 	}
 

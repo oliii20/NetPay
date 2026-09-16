@@ -19,6 +19,8 @@ type BlockchainCfg struct {
 	BloomFilterCfg `json:"bloom_filter" yaml:"bloom_filter"`
 	StorageCfg     `json:"storage"      yaml:"storage"`
 	VMCfg          `json:"vm"           yaml:"vm"`
+	// SimplifiedSettlement is copied from NettingCfg for shard-side execution.
+	SimplifiedSettlement bool `json:"-" yaml:"-"`
 }
 
 type StorageCfg struct {

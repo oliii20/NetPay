@@ -118,6 +118,11 @@ func (n *Node) Step(ctx context.Context) error {
 		if err := n.HandleMessage(ctx, wrapped); err != nil {
 			return err
 		}
+		if !n.stopped {
+			if err := n.dispatchPending(ctx); err != nil {
+				return err
+			}
+		}
 	}
 	if n.stopped {
 		return errStopped
@@ -177,7 +182,7 @@ func (n *Node) HandleReceipt(msg message.FinalizedBlockReceiptMsg) error {
 		return err
 	}
 
-	return n.store.SaveState(n.snapshot())
+	return n.saveCheckpoint()
 }
 
 func (n *Node) PendingBatchIDs() []merkle.Hash {
@@ -204,7 +209,7 @@ func (n *Node) HandleFinalized(ctx context.Context, msg message.MatchRootFinaliz
 	n.pending = n.pending[1:]
 	delete(n.dispatched, msg.Header.BatchID)
 
-	return n.store.SaveState(n.snapshot())
+	return n.saveCheckpoint()
 }
 
 func (n *Node) sendSettlementPackages(ctx context.Context, proposal model.BatchProposal) error {
@@ -284,9 +289,10 @@ func (n *Node) drainFrozen(ctx context.Context) error {
 		}
 		n.chainTip = proposal.Header.BatchID
 		n.pending = append(n.pending, proposal.Header.BatchID)
-		if err = n.store.PutProposalAndState(proposal, n.snapshot()); err != nil {
+		if err = n.store.PutProposalAndCheckpoint(proposal, n.snapshot()); err != nil {
 			return err
 		}
+		n.manager.AcknowledgeCheckpoint()
 		metric.FrozenWindowQueueLength = n.manager.FrozenWindowCount()
 		metric.BatchProposalBytes, err = encodedSize(message.BatchProposalMsg{NodeID: 0, Proposal: proposal})
 		if err != nil {
@@ -365,11 +371,21 @@ func (n *Node) snapshot() batchstore.SolverState {
 		PendingBatchIDs:   append([]merkle.Hash(nil), n.pending...),
 	}
 	if n.manager != nil {
-		managerState := n.manager.Snapshot()
+		managerState := n.manager.Checkpoint()
 		state.ManagerState = &managerState
 	}
 
 	return state
+}
+
+func (n *Node) saveCheckpoint() error {
+	if err := n.store.SaveCheckpoint(n.snapshot()); err != nil {
+		return err
+	}
+	if n.manager != nil {
+		n.manager.AcknowledgeCheckpoint()
+	}
+	return nil
 }
 
 func cloneBootstrap(input map[int64][]model.FinalizedBlockReceipt) map[int64][]model.FinalizedBlockReceipt {

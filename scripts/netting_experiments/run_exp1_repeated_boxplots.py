@@ -44,6 +44,8 @@ def main() -> int:
     parser.add_argument("--tx-number", type=positive_int, default=DEFAULT_TX_NUMBER)
     parser.add_argument("--tx-speed", type=positive_int, default=DEFAULT_TX_SPEED)
     parser.add_argument("--block-limit", type=positive_int, default=DEFAULT_BLOCK_LIMIT)
+    parser.add_argument("--shard-num", type=positive_int, default=4)
+    parser.add_argument("--node-num", type=positive_int, default=4)
     parser.add_argument("--block-interval-ms", type=positive_int, default=DEFAULT_BLOCK_INTERVAL_MS)
     parser.add_argument("--beacon-block-interval-ms", type=positive_int, default=DEFAULT_BEACON_BLOCK_INTERVAL_MS)
     parser.add_argument("--settlement-chunk-size", type=positive_int, default=DEFAULT_SETTLEMENT_CHUNK_SIZE)
@@ -92,6 +94,8 @@ def main() -> int:
         args.max_window_ms,
     )
     runner.validate_specs(specs)
+    specs = order_netting_first(specs)
+    specs = [replace_shard_node_count(spec, args.shard_num, args.node_num) for spec in specs]
 
     print(f"session: {out_dir}")
     if args.dry_run:
@@ -115,6 +119,8 @@ def main() -> int:
         "seeds": seeds,
         "tx_number": args.tx_number,
         "tx_speed": args.tx_speed,
+        "shard_num": args.shard_num,
+        "node_num": args.node_num,
         "block_limit": args.block_limit,
         "block_interval_ms": args.block_interval_ms,
         "beacon_block_interval_ms": args.beacon_block_interval_ms,
@@ -192,6 +198,26 @@ def append_repeated_summary(path: Path, row: dict[str, object]) -> None:
 
 def repeated_summary_fields() -> list[str]:
     return ["repeat", "session", *runner.SUMMARY_FIELDS]
+
+
+def order_netting_first(specs: list[runner.RunSpec]) -> list[runner.RunSpec]:
+    order = {
+        "netting_static_relay": 0,
+        "static_relay": 1,
+        "clpa_broker": 2,
+    }
+    seed_positions: dict[int, int] = {}
+    for spec in specs:
+        if spec.seed not in seed_positions:
+            seed_positions[spec.seed] = len(seed_positions)
+    return sorted(
+        specs,
+        key=lambda spec: (seed_positions[spec.seed], order.get(spec.method, len(order))),
+    )
+
+
+def replace_shard_node_count(spec: runner.RunSpec, shard_num: int, node_num: int) -> runner.RunSpec:
+    return runner.replace(spec, shard_num=shard_num, node_num=node_num)
 
 
 def read_repeated_summary(path: Path) -> list[dict[str, str]]:

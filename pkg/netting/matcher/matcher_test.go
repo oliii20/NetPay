@@ -29,7 +29,7 @@ func TestMatchRunsExactBeforeBestFit(t *testing.T) {
 	require.Len(t, output.Allocations, 2)
 	require.Equal(t, matcher.ExactPhase, output.Allocations[0].Phase)
 	require.Equal(t, int64(5), output.Allocations[0].Amount.Int64())
-	require.Equal(t, matcher.BestFitPhase, output.Allocations[1].Phase)
+	require.Equal(t, matcher.SplitPhase, output.Allocations[1].Phase)
 	require.Equal(t, int64(6), output.Allocations[1].Amount.Int64())
 	requireResultAmounts(t, output, map[byte][2]int64{
 		1: {5, 0},
@@ -71,7 +71,7 @@ func TestMatchModesSupportAblation(t *testing.T) {
 
 	full, err := matcher.MatchWithMode(payments, matcher.FullMode)
 	require.NoError(t, err)
-	require.Equal(t, []matcher.Phase{matcher.ExactPhase, matcher.BestFitPhase}, allocationPhases(full))
+	require.Equal(t, []matcher.Phase{matcher.ExactPhase, matcher.SplitPhase}, allocationPhases(full))
 	requireResultAmounts(t, full, map[byte][2]int64{
 		1: {5, 0},
 		2: {7, 0},
@@ -91,19 +91,43 @@ func TestMatchModesSupportAblation(t *testing.T) {
 func TestMatchBestFitChoosesSmallestSufficientCounterIntent(t *testing.T) {
 	t.Parallel()
 
-	output, err := matcher.Match([]intent.PaymentIntent{
+	output, err := matcher.MatchWithMode([]intent.PaymentIntent{
 		matcherTestIntent(1, 0, 1, 8),
 		matcherTestIntent(2, 0, 1, 7),
 		matcherTestIntent(3, 1, 0, 9),
 		matcherTestIntent(4, 1, 0, 20),
-	})
+	}, matcher.BestFitMode)
 	require.NoError(t, err)
 	require.Len(t, output.Allocations, 2)
 	require.Equal(t, byte(3), resultSender(t, output, output.Allocations[0].HigherToLowerIntentID))
 	require.Equal(t, byte(4), resultSender(t, output, output.Allocations[1].HigherToLowerIntentID))
 }
 
-func TestMatchSplitConsumesLargestAmountThenSmallestIDOnTie(t *testing.T) {
+func TestMatchFullModeMaximizesFullyMatchedIntentCount(t *testing.T) {
+	t.Parallel()
+
+	output, err := matcher.Match([]intent.PaymentIntent{
+		matcherTestIntent(1, 0, 1, 100),
+		matcherTestIntent(2, 0, 1, 1),
+		matcherTestIntent(3, 0, 1, 1),
+		matcherTestIntent(4, 0, 1, 1),
+		matcherTestIntent(5, 0, 1, 1),
+		matcherTestIntent(6, 0, 1, 1),
+		matcherTestIntent(7, 1, 0, 5),
+	})
+	require.NoError(t, err)
+	requireResultAmounts(t, output, map[byte][2]int64{
+		1: {0, 100},
+		2: {1, 0},
+		3: {1, 0},
+		4: {1, 0},
+		5: {1, 0},
+		6: {1, 0},
+		7: {5, 0},
+	})
+}
+
+func TestMatchSplitConsumesSmallestAmountThenSmallestIDOnTie(t *testing.T) {
 	t.Parallel()
 
 	left := matcherTestIntent(1, 0, 1, 13)
@@ -120,17 +144,23 @@ func TestMatchSplitConsumesLargestAmountThenSmallestIDOnTie(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, output.Allocations, 3)
 	require.Equal(t, []matcher.Phase{matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase}, allocationPhases(output))
-	require.Equal(t, []int64{5, 5, 3}, allocationAmounts(output))
-	require.Equal(t, firstTieID, output.Allocations[0].HigherToLowerIntentID)
-	requireResultAmounts(t, output, map[byte][2]int64{
-		1: {13, 0},
-		2: {5, 0},
-		3: {5, 0},
-		4: {3, 1},
-	})
+	require.Equal(t, []int64{4, 5, 4}, allocationAmounts(output))
+	require.Equal(t, firstTieID, output.Allocations[1].HigherToLowerIntentID)
+	firstTieTag := resultSender(t, output, firstTieID)
+	secondTieTag := byte(2)
+	if firstTieTag == 2 {
+		secondTieTag = 3
+	}
+	expected := map[byte][2]int64{
+		1:            {13, 0},
+		4:            {4, 0},
+		firstTieTag:  {5, 0},
+		secondTieTag: {4, 1},
+	}
+	requireResultAmounts(t, output, expected)
 }
 
-func TestMatchUsesLowerToHigherAsActiveDirectionWhenTotalsTie(t *testing.T) {
+func TestMatchUsesSmallestIntentFirstWhenTotalsTie(t *testing.T) {
 	t.Parallel()
 
 	output, err := matcher.Match([]intent.PaymentIntent{
@@ -141,7 +171,7 @@ func TestMatchUsesLowerToHigherAsActiveDirectionWhenTotalsTie(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, output.Allocations)
-	require.Equal(t, byte(1), resultSender(t, output, output.Allocations[0].LowerToHigherIntentID))
+	require.Equal(t, byte(2), resultSender(t, output, output.Allocations[0].LowerToHigherIntentID))
 }
 
 func TestMatchIsDeterministicAcrossInputOrderAndGroups(t *testing.T) {

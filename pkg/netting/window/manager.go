@@ -54,15 +54,16 @@ type FrozenWindow struct {
 }
 
 type Manager struct {
-	cfg          Config
-	clock        Clock
-	nextWindowID uint64
-	openedAt     *time.Time
-	pending      map[intent.ID]intent.PaymentIntent
-	assigned     map[intent.ID]uint64
-	lastAssigned map[int64]uint64
-	streams      map[int64]*StreamState
-	frozen       []FrozenWindow
+	cfg           Config
+	clock         Clock
+	nextWindowID  uint64
+	openedAt      *time.Time
+	pending       map[intent.ID]intent.PaymentIntent
+	assigned      map[intent.ID]uint64
+	dirtyAssigned map[intent.ID]uint64
+	lastAssigned  map[int64]uint64
+	streams       map[int64]*StreamState
+	frozen        []FrozenWindow
 }
 
 type systemClock struct{}
@@ -83,13 +84,14 @@ func New(cfg Config, clock Clock, checkpoints map[int64]model.ShardCheckpoint) (
 	}
 
 	manager := &Manager{
-		cfg:          cfg,
-		clock:        clock,
-		nextWindowID: 1,
-		pending:      make(map[intent.ID]intent.PaymentIntent),
-		assigned:     make(map[intent.ID]uint64),
-		lastAssigned: make(map[int64]uint64, cfg.ShardCount),
-		streams:      make(map[int64]*StreamState, cfg.ShardCount),
+		cfg:           cfg,
+		clock:         clock,
+		nextWindowID:  1,
+		pending:       make(map[intent.ID]intent.PaymentIntent),
+		assigned:      make(map[intent.ID]uint64),
+		dirtyAssigned: make(map[intent.ID]uint64),
+		lastAssigned:  make(map[int64]uint64, cfg.ShardCount),
+		streams:       make(map[int64]*StreamState, cfg.ShardCount),
 	}
 	for shardID := range cfg.ShardCount {
 		checkpoint, exists := checkpoints[shardID]
@@ -147,6 +149,13 @@ func (m *Manager) AddReceipt(receipt model.FinalizedBlockReceipt) (*FrozenWindow
 func (m *Manager) TryClose() *FrozenWindow {
 	if len(m.pending) == 0 || m.openedAt == nil {
 		return nil
+	}
+
+	if m.cfg.BatchSize > 0 && len(m.pending) >= m.cfg.BatchSize {
+		window := m.seal("batch_size")
+		cloned := cloneFrozenWindow(window)
+
+		return &cloned
 	}
 
 	timeReady := !m.clock.Now().Before(m.openedAt.Add(m.cfg.MaxWindowDuration))
@@ -321,6 +330,7 @@ func (m *Manager) seal(closeReason string) FrozenWindow {
 
 	for id := range m.pending {
 		m.assigned[id] = window.WindowID
+		m.dirtyAssigned[id] = window.WindowID
 	}
 	m.pending = make(map[intent.ID]intent.PaymentIntent)
 	m.openedAt = nil

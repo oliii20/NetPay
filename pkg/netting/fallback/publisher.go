@@ -3,6 +3,7 @@ package fallback
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
@@ -15,6 +16,8 @@ import (
 
 const republishInterval = 5 * time.Second
 
+const maxFallbackPublishesPerBlock = 8192
+
 type PendingReader interface {
 	GetPendingFallbacks(context.Context) ([]model.ReservedFallback, error)
 }
@@ -26,6 +29,7 @@ type Publisher struct {
 	conn     *network.ConnHandler
 	resolver nodetopo.NodeMapper
 	lastSent map[model.FallbackKey]time.Time
+	lastScan time.Time
 }
 
 func NewPublisher(
@@ -51,28 +55,102 @@ func (p *Publisher) PublishAfterBlock(ctx context.Context, committed *block.Bloc
 	if err := p.publishProgress(ctx, committed); err != nil {
 		return err
 	}
+	now := time.Now()
+	published, err := p.publishNewFallbacks(ctx, committed, now)
+	if err != nil {
+		return err
+	}
+	if published > 0 && p.lastScan.IsZero() {
+		p.lastScan = now
+	}
+	if !p.shouldScan(now) {
+		return nil
+	}
 	items, err := p.chain.GetPendingFallbacks(ctx)
 	if err != nil {
 		return err
 	}
+	p.lastScan = now
 	for _, item := range items {
-		key := item.Key()
-		if sentAt, ok := p.lastSent[key]; ok && time.Since(sentAt) < republishInterval {
-			continue
+		if published >= maxFallbackPublishesPerBlock {
+			break
 		}
-		destination, resolveErr := p.resolver.GetLeader(item.DestinationShard)
-		if resolveErr != nil {
-			return fmt.Errorf("resolve fallback destination shard %d: %w", item.DestinationShard, resolveErr)
+		sent, sendErr := p.publishFallback(ctx, item, now)
+		if sendErr != nil {
+			return sendErr
 		}
-		wrapped, wrapErr := message.WrapMsg(&message.FallbackTxMsg{NodeID: p.nodeID, Fallback: item})
-		if wrapErr != nil {
-			return fmt.Errorf("wrap reserved fallback: %w", wrapErr)
+		if sent {
+			published++
 		}
-		p.conn.SendMsg2Dest(ctx, destination, wrapped)
-		p.lastSent[key] = time.Now()
 	}
 
 	return nil
+}
+
+func (p *Publisher) shouldScan(now time.Time) bool {
+	return p.lastScan.IsZero() || now.Sub(p.lastScan) >= republishInterval
+}
+
+func (p *Publisher) publishNewFallbacks(ctx context.Context, committed *block.Block, now time.Time) (int, error) {
+	published := 0
+	for idx := range committed.TxList {
+		tx := &committed.TxList[idx]
+		if tx.Settlement == nil {
+			continue
+		}
+		for _, result := range tx.Settlement.Settlement.Outgoing {
+			if result.FallbackAmount == nil || result.FallbackAmount.Sign() <= 0 {
+				continue
+			}
+			if published >= maxFallbackPublishesPerBlock {
+				return published, nil
+			}
+			sent, err := p.publishFallback(ctx, reservedFallbackFromSettlement(*tx.Settlement, result), now)
+			if err != nil {
+				return published, err
+			}
+			if sent {
+				published++
+			}
+		}
+	}
+
+	return published, nil
+}
+
+func reservedFallbackFromSettlement(
+	pack model.SettlementPackage,
+	result model.IntentResult,
+) model.ReservedFallback {
+	return model.ReservedFallback{
+		IntentID:         result.IntentID,
+		BatchID:          pack.Settlement.BatchID,
+		Sender:           result.Intent.Sender,
+		Recipient:        result.Intent.Recipient,
+		SourceShard:      result.Intent.SourceShard,
+		DestinationShard: result.Intent.DestinationShard,
+		Amount:           new(big.Int).Set(result.FallbackAmount),
+		Proof:            pack.Clone(),
+	}
+}
+
+func (p *Publisher) publishFallback(ctx context.Context, item model.ReservedFallback, now time.Time) (bool, error) {
+	key := item.Key()
+	if sentAt, ok := p.lastSent[key]; ok && now.Sub(sentAt) < republishInterval {
+		return false, nil
+	}
+	destination, err := p.resolver.GetLeader(item.DestinationShard)
+	if err != nil {
+		return false, fmt.Errorf("resolve fallback destination shard %d: %w", item.DestinationShard, err)
+	}
+	wrapped, err := message.WrapMsg(&message.FallbackTxMsg{NodeID: p.nodeID, Fallback: item.Clone()})
+	if err != nil {
+		return false, fmt.Errorf("wrap reserved fallback: %w", err)
+	}
+	p.conn.SendMsg2Dest(ctx, destination, wrapped)
+	p.lastSent[key] = now
+
+	return true, nil
 }
 
 func (p *Publisher) publishProgress(ctx context.Context, committed *block.Block) error {

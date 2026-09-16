@@ -103,6 +103,42 @@ func TestCollectorFlushWritesPartialSnapshotsBeforeClose(t *testing.T) {
 	require.NoError(t, collector.OutputResultAndClose())
 }
 
+func TestCollectorAggregatesBatchesIndependently(t *testing.T) {
+	dir := t.TempDir()
+	collector := nettingstats.New(dir)
+	t.Cleanup(func() { require.NoError(t, collector.OutputResultAndClose()) })
+	for idx := 1; idx <= 2; idx++ {
+		batchID := merkle.Hash{byte(idx)}
+		intentID := intent.ID{byte(idx)}
+		updates := []any{
+			&message.NettingBatchMetricMsg{Metric: model.NettingBatchMetric{BatchID: batchID, WindowID: uint64(idx)}},
+			&message.NettingExecutionMetricMsg{Metrics: []model.NettingExecutionMetric{
+				{Phase: model.MetricPhaseReservation, IntentID: intentID, CreatedAt: time.Unix(10, 0), CommittedAt: time.Unix(12, 0)},
+				{Phase: model.MetricPhaseSettlement, IntentID: intentID, BatchID: batchID, Final: true,
+					CommittedAt: time.Unix(12+int64(idx), 0), StateReadCount: int64(idx), StateWriteCount: int64(idx * 2)},
+			}},
+		}
+		for _, update := range updates {
+			wrapped, err := message.WrapMsg(update)
+			require.NoError(t, err)
+			require.NoError(t, collector.UpdateMeasureRecord(wrapped))
+		}
+	}
+	require.NoError(t, collector.Flush())
+	rows := readCSV(t, filepath.Join(dir, nettingstats.BatchMetricsFile))
+	require.Len(t, rows, 3)
+	first := [][]string{rows[0], rows[1]}
+	second := [][]string{rows[0], rows[2]}
+	require.Equal(t, "1000000000", csvValue(first, "SettlementLatencyNs"))
+	require.Equal(t, "2000000000", csvValue(second, "SettlementLatencyNs"))
+	require.Equal(t, "3000000000", csvValue(first, "EndToEndLatencyNs"))
+	require.Equal(t, "4000000000", csvValue(second, "EndToEndLatencyNs"))
+	require.Equal(t, "1", csvValue(first, "StateReadCount"))
+	require.Equal(t, "2", csvValue(second, "StateReadCount"))
+	require.Equal(t, "2", csvValue(first, "StateWriteCount"))
+	require.Equal(t, "4", csvValue(second, "StateWriteCount"))
+}
+
 func readCSV(t *testing.T, path string) [][]string {
 	t.Helper()
 	file, err := os.Open(path)

@@ -44,9 +44,11 @@ type balanceKey struct {
 
 var settlementInitialBalance, _ = uint256.FromDecimal(account.NormalInitBalanceStr)
 
-type Executor struct{}
+type Executor struct {
+	Simplified bool
+}
 
-func (Executor) Execute(
+func (e Executor) Execute(
 	stateDB *state.StateDB,
 	shardID int64,
 	pack model.SettlementPackage,
@@ -68,6 +70,14 @@ func (Executor) Execute(
 	}
 	if err := verifyProofs(pack); err != nil {
 		return err
+	}
+	if e.Simplified {
+		if err := validateInstructions(nil, shardID, settlement); err != nil {
+			return err
+		}
+		markExecuted(stateDB, settlement.BatchID, shardID, settlement.ChunkIndex)
+
+		return nil
 	}
 	registryState := registry.New(stateDB)
 	if err := validateInstructions(registryState, shardID, settlement); err != nil {
@@ -189,12 +199,14 @@ func validateInstructions(registryState *registry.Registry, shardID int64, settl
 			return ErrDuplicateIntent
 		}
 		seen[result.IntentID] = struct{}{}
-		reservation, err := registryState.Get(result.Intent)
-		if err != nil {
-			return err
-		}
-		if reservation.Status != registry.ReservationReserved || reservation.Amount.Cmp(result.Intent.Amount) != 0 {
-			return registry.ErrInvalidStatus
+		if registryState != nil {
+			reservation, err := registryState.Get(result.Intent)
+			if err != nil {
+				return err
+			}
+			if reservation.Status != registry.ReservationReserved || reservation.Amount.Cmp(result.Intent.Amount) != 0 {
+				return registry.ErrInvalidStatus
+			}
 		}
 		addAmount(outgoing, balanceKey{
 			Counterparty: result.Intent.DestinationShard, AssetID: result.Intent.AssetID,
