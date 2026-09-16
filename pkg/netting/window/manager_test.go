@@ -98,7 +98,7 @@ func TestManagerDoesNotStartTimerForEmptyBlocks(t *testing.T) {
 	require.Len(t, sealed.Receipts, 2)
 }
 
-func TestManagerClosesWhenBatchSizeReached(t *testing.T) {
+func TestManagerClosesAtCheckpointWhenBatchSizeExceeded(t *testing.T) {
 	t.Parallel()
 
 	clock := newFakeClock()
@@ -109,10 +109,41 @@ func TestManagerClosesWhenBatchSizeReached(t *testing.T) {
 	)
 	sealed, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1, 2, 3))
 	require.NoError(t, err)
+	require.Nil(t, sealed)
+	require.Equal(t, 3, manager.PendingIntentCount())
+
+	clock.Advance(99 * time.Millisecond)
+	require.Nil(t, manager.TryClose())
+
+	clock.Advance(time.Millisecond)
+	sealed = manager.TryClose()
 	require.NotNil(t, sealed)
-	require.Equal(t, "batch_size", sealed.CloseReason)
+	require.Equal(t, "checkpoint_batch_size", sealed.CloseReason)
 	require.Len(t, sealed.Intents, 3)
 	require.Zero(t, manager.PendingIntentCount())
+}
+
+func TestManagerWaitsWhenBatchSizeEqualsThresholdAtCheckpoint(t *testing.T) {
+	t.Parallel()
+
+	clock := newFakeClock()
+	manager := newManager(
+		t,
+		window.Config{ShardCount: 2, BatchSize: 3, MaxWindowDuration: 2500 * time.Millisecond},
+		clock,
+	)
+	sealed, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1, 2, 3))
+	require.NoError(t, err)
+	require.Nil(t, sealed)
+
+	clock.Advance(2 * time.Second)
+	require.Nil(t, manager.TryClose())
+
+	clock.Advance(500 * time.Millisecond)
+	sealed = manager.TryClose()
+	require.NotNil(t, sealed)
+	require.Equal(t, "max_window_duration", sealed.CloseReason)
+	require.Len(t, sealed.Intents, 3)
 }
 
 func TestManagerDisablesBatchSizeCloseWhenUnset(t *testing.T) {
