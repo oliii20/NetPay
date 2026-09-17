@@ -37,6 +37,7 @@ netting:
   max_window_duration_ms: 2000
   solver_tick_interval_ms: 100
   matcher_mode: "full"
+  beacon_validation_mode: "light"
   batch_store_path: "./.exp/netting-e2e/netting/solver.db"
   beacon_store_path: "./.exp/netting-e2e/netting/beacon.db"
 

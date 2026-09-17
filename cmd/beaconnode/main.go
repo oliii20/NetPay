@@ -51,7 +51,9 @@ func main() {
 	}
 	defer func() { _ = store.Close() }()
 	conn := network.NewConnHandler(p2p)
-	op := beaconop.New(conn, resolver, store, cfg.ShardNum, lp.NodeID)
+	op := beaconop.NewWithValidationMode(
+		conn, resolver, store, cfg.ShardNum, lp.NodeID, beacon.ValidationMode(cfg.BeaconValidationMode),
+	)
 	if cfg.MetricsEnabled {
 		op.EnableMetrics()
 	}

@@ -43,8 +43,18 @@ func New(
 	store *beacon.Store,
 	shardCount, nodeID int64,
 ) *Op {
+	return NewWithValidationMode(conn, resolver, store, shardCount, nodeID, beacon.ValidationModeLight)
+}
+
+func NewWithValidationMode(
+	conn *network.ConnHandler,
+	resolver nodetopo.NodeMapper,
+	store *beacon.Store,
+	shardCount, nodeID int64,
+	validationMode beacon.ValidationMode,
+) *Op {
 	return &Op{
-		conn: conn, resolver: resolver, store: store, validator: beacon.NewValidator(store),
+		conn: conn, resolver: resolver, store: store, validator: beacon.NewValidatorWithMode(store, validationMode),
 		shardCount: shardCount, nodeID: nodeID,
 		metrics:    metrics.NewPublisher(false, nodeID, conn, resolver),
 		receivedAt: make(map[[32]byte]time.Time), validationTime: make(map[[32]byte]time.Duration),

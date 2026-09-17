@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/big"
 	"reflect"
 	"sort"
 
@@ -21,7 +22,18 @@ var (
 	ErrReceiptCoverage      = errors.New("finalized receipts do not cover vector cut")
 	ErrDuplicateBatchIntent = errors.New("duplicate or previously consumed batch intent")
 	ErrExpiredBatchIntent   = errors.New("batch contains expired intent")
+	ErrResultCoverage       = errors.New("intent results do not cover batch intents")
+	ErrMatchedConservation  = errors.New("matched amount does not conserve by shard pair and asset")
+	ErrSettlementCoverage   = errors.New("settlements do not cover intent results")
+	ErrInvalidCommitment    = errors.New("invalid Beacon batch commitment")
 	ErrDerivedBatchMismatch = errors.New("batch differs from deterministic derivation")
+)
+
+type ValidationMode string
+
+const (
+	ValidationModeLight ValidationMode = "light"
+	ValidationModeFull  ValidationMode = "full"
 )
 
 type StateReader interface {
@@ -31,10 +43,19 @@ type StateReader interface {
 
 type Validator struct {
 	state StateReader
+	mode  ValidationMode
 }
 
 func NewValidator(state StateReader) *Validator {
-	return &Validator{state: state}
+	return NewValidatorWithMode(state, ValidationModeLight)
+}
+
+func NewFullValidator(state StateReader) *Validator {
+	return NewValidatorWithMode(state, ValidationModeFull)
+}
+
+func NewValidatorWithMode(state StateReader, mode ValidationMode) *Validator {
+	return &Validator{state: state, mode: normalizeValidationMode(mode)}
 }
 
 func (v *Validator) Validate(proposal model.BatchProposal) error {
@@ -75,7 +96,26 @@ func (v *Validator) Validate(proposal model.BatchProposal) error {
 			return fmt.Errorf("validate intent result: %w", err)
 		}
 	}
+	if err = validateResultCoverage(intents, proposal.Sidecar.IntentResults); err != nil {
+		return err
+	}
+	if err = validateMatchedConservation(proposal.Sidecar.IntentResults); err != nil {
+		return err
+	}
+	if err = validateSettlementCoverage(proposal.Header, proposal.Sidecar.IntentResults, proposal.Sidecar.ShardSettlements); err != nil {
+		return err
+	}
+	if err = batch.VerifyProposalCommitments(proposal); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidCommitment, err)
+	}
+	if v.mode == ValidationModeFull {
+		return validateDerivedBatch(proposal, intents)
+	}
 
+	return nil
+}
+
+func validateDerivedBatch(proposal model.BatchProposal, intents []intent.PaymentIntent) error {
 	expected, err := (batch.Builder{
 		MatcherMode:         matcher.Mode(proposal.Header.MatcherMode),
 		SettlementChunkSize: int(proposal.Header.SettlementChunkSize),
@@ -92,6 +132,169 @@ func (v *Validator) Validate(proposal model.BatchProposal) error {
 		!reflect.DeepEqual(expected.Sidecar.IntentResults, proposal.Sidecar.IntentResults) ||
 		!equalShardSettlements(expected.Sidecar.ShardSettlements, proposal.Sidecar.ShardSettlements) {
 		return ErrDerivedBatchMismatch
+	}
+
+	return nil
+}
+
+func normalizeValidationMode(mode ValidationMode) ValidationMode {
+	switch mode {
+	case "", ValidationModeLight:
+		return ValidationModeLight
+	case ValidationModeFull:
+		return ValidationModeFull
+	default:
+		return ValidationModeLight
+	}
+}
+
+func validateResultCoverage(intents []intent.PaymentIntent, results []model.IntentResult) error {
+	if len(intents) == 0 {
+		return ErrResultCoverage
+	}
+	expected := make(map[intent.ID]struct{}, len(intents))
+	for _, payment := range intents {
+		id, err := payment.ID()
+		if err != nil {
+			return fmt.Errorf("calculate batch intent ID: %w", err)
+		}
+		expected[id] = struct{}{}
+	}
+	seen := make(map[intent.ID]struct{}, len(results))
+	for _, result := range results {
+		if _, ok := expected[result.IntentID]; !ok {
+			return fmt.Errorf("%w: unexpected result %x", ErrResultCoverage, result.IntentID)
+		}
+		if _, exists := seen[result.IntentID]; exists {
+			return fmt.Errorf("%w: duplicate result %x", ErrResultCoverage, result.IntentID)
+		}
+		seen[result.IntentID] = struct{}{}
+	}
+	if len(seen) != len(expected) {
+		return ErrResultCoverage
+	}
+
+	return nil
+}
+
+type shardPairAsset struct {
+	lower   int64
+	higher  int64
+	assetID intent.AssetID
+}
+
+type directionalMatched struct {
+	lowerToHigher *big.Int
+	higherToLower *big.Int
+}
+
+func validateMatchedConservation(results []model.IntentResult) error {
+	groups := make(map[shardPairAsset]*directionalMatched)
+	for _, result := range results {
+		source, destination := result.Intent.SourceShard, result.Intent.DestinationShard
+		if source < 0 || destination < 0 || source == destination {
+			return fmt.Errorf("%w: invalid shard pair %d -> %d", ErrMatchedConservation, source, destination)
+		}
+		lower, higher := source, destination
+		lowerToHigher := true
+		if lower > higher {
+			lower, higher = higher, lower
+			lowerToHigher = false
+		}
+		key := shardPairAsset{lower: lower, higher: higher, assetID: result.Intent.AssetID}
+		group := groups[key]
+		if group == nil {
+			group = &directionalMatched{lowerToHigher: new(big.Int), higherToLower: new(big.Int)}
+			groups[key] = group
+		}
+		if lowerToHigher {
+			group.lowerToHigher.Add(group.lowerToHigher, result.MatchedAmount)
+		} else {
+			group.higherToLower.Add(group.higherToLower, result.MatchedAmount)
+		}
+	}
+	for key, group := range groups {
+		if group.lowerToHigher.Cmp(group.higherToLower) != 0 {
+			return fmt.Errorf("%w: shards %d-%d", ErrMatchedConservation, key.lower, key.higher)
+		}
+	}
+
+	return nil
+}
+
+type settlementOccurrence struct {
+	shardID  int64
+	intentID intent.ID
+	role     string
+}
+
+func validateSettlementCoverage(
+	header model.MatchRootBlockBody,
+	results []model.IntentResult,
+	settlements []model.ShardSettlement,
+) error {
+	byID := make(map[intent.ID]model.IntentResult, len(results))
+	expected := make(map[settlementOccurrence]int, len(results)*3)
+	for _, result := range results {
+		byID[result.IntentID] = result
+		expected[settlementOccurrence{shardID: result.Intent.SourceShard, intentID: result.IntentID, role: "outgoing"}]++
+		if result.MatchedAmount.Sign() > 0 {
+			expected[settlementOccurrence{shardID: result.Intent.DestinationShard, intentID: result.IntentID, role: "incoming"}]++
+		}
+		if result.FallbackAmount.Sign() > 0 {
+			expected[settlementOccurrence{shardID: result.Intent.DestinationShard, intentID: result.IntentID, role: "fallback_incoming"}]++
+		}
+	}
+	cutShards := make(map[int64]struct{}, len(header.Cuts))
+	for _, cut := range header.Cuts {
+		cutShards[cut.ShardID] = struct{}{}
+	}
+	for _, settlement := range settlements {
+		if settlement.BatchID != header.BatchID || settlement.WindowID != header.WindowID {
+			return ErrSettlementCoverage
+		}
+		if _, ok := cutShards[settlement.ShardID]; !ok {
+			return fmt.Errorf("%w: shard %d outside vector cut", ErrSettlementCoverage, settlement.ShardID)
+		}
+		if err := consumeSettlementResults(expected, byID, settlement.ShardID, "outgoing", settlement.Outgoing); err != nil {
+			return err
+		}
+		if err := consumeSettlementResults(expected, byID, settlement.ShardID, "incoming", settlement.Incoming); err != nil {
+			return err
+		}
+		if err := consumeSettlementResults(
+			expected, byID, settlement.ShardID, "fallback_incoming", settlement.FallbackIncoming,
+		); err != nil {
+			return err
+		}
+	}
+	for occurrence, count := range expected {
+		if count != 0 {
+			return fmt.Errorf("%w: missing %s for shard %d intent %x",
+				ErrSettlementCoverage, occurrence.role, occurrence.shardID, occurrence.intentID)
+		}
+	}
+
+	return nil
+}
+
+func consumeSettlementResults(
+	expected map[settlementOccurrence]int,
+	byID map[intent.ID]model.IntentResult,
+	shardID int64,
+	role string,
+	results []model.IntentResult,
+) error {
+	for _, result := range results {
+		canonical, ok := byID[result.IntentID]
+		if !ok || !reflect.DeepEqual(canonical, result) {
+			return fmt.Errorf("%w: unexpected %s result %x", ErrSettlementCoverage, role, result.IntentID)
+		}
+		key := settlementOccurrence{shardID: shardID, intentID: result.IntentID, role: role}
+		expected[key]--
+		if expected[key] < 0 {
+			return fmt.Errorf("%w: duplicate %s result %x", ErrSettlementCoverage, role, result.IntentID)
+		}
 	}
 
 	return nil

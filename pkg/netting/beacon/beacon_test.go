@@ -74,7 +74,7 @@ func TestValidatorRejectsTamperingCoverageAndExpiry(t *testing.T) {
 		tampered.Sidecar.IntentResults[0].Intent.Amount,
 		tampered.Sidecar.IntentResults[0].MatchedAmount,
 	)
-	require.ErrorIs(t, validator.Validate(tampered), beacon.ErrDerivedBatchMismatch)
+	require.ErrorIs(t, validator.Validate(tampered), beacon.ErrMatchedConservation)
 
 	brokenCoverage := valid.Clone()
 	brokenCoverage.Sidecar.FinalizedBlocks[0].Height = 2
@@ -87,6 +87,33 @@ func TestValidatorRejectsTamperingCoverageAndExpiry(t *testing.T) {
 		}
 	}
 	require.True(t, errors.Is(validator.Validate(expired), beacon.ErrExpiredBatchIntent))
+}
+
+func TestValidatorModesControlDeterministicDerivation(t *testing.T) {
+	store, err := beacon.OpenStore(filepath.Join(t.TempDir(), "beacon.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	first := beaconPayment(0, 1, 10, 1)
+	second := beaconPayment(1, 0, 7, 2)
+	frozen := window.FrozenWindow{
+		WindowID: 1,
+		Cuts: []model.ShardCut{
+			{ShardID: 0, EndHeight: 1, EndBlockHash: beaconHash(0x11)},
+			{ShardID: 1, EndHeight: 1, EndBlockHash: beaconHash(0x21)},
+		},
+		Receipts: []model.FinalizedBlockReceipt{
+			{ShardID: 0, Height: 1, ParentHash: beaconHash(0x10), BlockHash: beaconHash(0x11), Epoch: 1, Intents: []intent.PaymentIntent{first}},
+			{ShardID: 1, Height: 1, ParentHash: beaconHash(0x20), BlockHash: beaconHash(0x21), Epoch: 1, Intents: []intent.PaymentIntent{second}},
+		},
+		Intents: []intent.PaymentIntent{first, second},
+	}
+	proposal, err := (batch.Builder{MatcherMode: "exact_only"}).Build(frozen, merkle.Hash{})
+	require.NoError(t, err)
+	proposal.Header.MatcherMode = "full"
+
+	require.NoError(t, beacon.NewValidator(store).Validate(proposal))
+	require.ErrorIs(t, beacon.NewFullValidator(store).Validate(proposal), beacon.ErrDerivedBatchMismatch)
 }
 
 func TestValidatorAcceptsGobRoundTripWithEmptyShardInstructions(t *testing.T) {

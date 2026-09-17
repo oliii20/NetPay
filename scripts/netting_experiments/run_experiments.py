@@ -66,6 +66,7 @@ class RunSpec:
     netting_enabled: bool = True
     simplified_settlement: bool = True
     matcher_mode: str = "full"
+    beacon_validation_mode: str = "light"
     workload: str = "dataset"
     tx_number: int = 120
     tx_speed: int = 120
@@ -1200,6 +1201,7 @@ netting:
   max_window_duration_ms: {spec.max_window_ms}
   solver_tick_interval_ms: 100
   matcher_mode: "{spec.matcher_mode}"
+  beacon_validation_mode: "{spec.beacon_validation_mode}"
   batch_store_path: "{run_dir}/netting/solver.db"
   beacon_store_path: "{run_dir}/netting/beacon.db"
 

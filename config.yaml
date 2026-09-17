@@ -120,6 +120,7 @@ netting:
   settlement_chunk_size: 0
   max_window_duration_ms: 2000
   solver_tick_interval_ms: 100
+  beacon_validation_mode: "light"
   batch_store_path: "./exp/netting/solver.db"
   beacon_store_path: "./exp/netting/beacon.db"
 
