@@ -56,6 +56,10 @@ type BatchProposal struct {
 	Sidecar BatchSidecar
 }
 
+type BatchHeaderProposal struct {
+	Header MatchRootBlockBody
+}
+
 type SettlementPackage struct {
 	Header          MatchRootBlockBody
 	Settlement      ShardSettlement

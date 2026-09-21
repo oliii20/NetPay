@@ -10,6 +10,7 @@ import (
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/commitment"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/matcher"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
@@ -59,6 +60,9 @@ func NewValidatorWithMode(state StateReader, mode ValidationMode) *Validator {
 }
 
 func (v *Validator) Validate(proposal model.BatchProposal) error {
+	if v.mode == ValidationModeLight {
+		return v.ValidateHeader(model.BatchHeaderProposal{Header: proposal.Header})
+	}
 	tip, hasTip, err := v.state.Tip()
 	if err != nil {
 		return err
@@ -115,6 +119,24 @@ func (v *Validator) Validate(proposal model.BatchProposal) error {
 	return nil
 }
 
+func (v *Validator) ValidateHeader(proposal model.BatchHeaderProposal) error {
+	tip, hasTip, err := v.state.Tip()
+	if err != nil {
+		return err
+	}
+	if err = validateSequence(proposal.Header, tip, hasTip); err != nil {
+		return err
+	}
+	if _, _, err = canonicalHeaderCuts(proposal.Header.Cuts, tip, hasTip); err != nil {
+		return err
+	}
+	if err = validateHeaderCommitment(proposal.Header); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidCommitment, err)
+	}
+
+	return nil
+}
+
 func validateDerivedBatch(proposal model.BatchProposal, intents []intent.PaymentIntent) error {
 	expected, err := (batch.Builder{
 		MatcherMode:         matcher.Mode(proposal.Header.MatcherMode),
@@ -146,6 +168,20 @@ func normalizeValidationMode(mode ValidationMode) ValidationMode {
 	default:
 		return ValidationModeLight
 	}
+}
+
+func validateHeaderCommitment(header model.MatchRootBlockBody) error {
+	roots := commitment.Roots{
+		CutRoot:             header.CutRoot,
+		IntentResultRoot:    header.IntentResultRoot,
+		ShardSettlementRoot: header.ShardSettlementRoot,
+	}
+	if commitment.MatchRoot(roots) != header.MatchRoot ||
+		commitment.BatchID(header.PreviousBatchID, header.WindowID, header.MatchRoot) != header.BatchID {
+		return batch.ErrInvalidCommitment
+	}
+
+	return nil
 }
 
 func validateResultCoverage(intents []intent.PaymentIntent, results []model.IntentResult) error {
@@ -408,6 +444,40 @@ func validateReceiptCoverage(
 	}
 
 	return intents, acceptanceEpoch, nil
+}
+
+func canonicalHeaderCuts(
+	cuts []model.ShardCut,
+	tip MatchRootBlock,
+	hasTip bool,
+) ([]model.ShardCut, map[int64]model.ShardCut, error) {
+	previousCuts := make(map[int64]model.ShardCut)
+	if hasTip {
+		for _, cut := range tip.Body.Cuts {
+			previousCuts[cut.ShardID] = cut
+		}
+	}
+	cloned := append([]model.ShardCut(nil), cuts...)
+	sort.Slice(cloned, func(i, j int) bool { return cloned[i].ShardID < cloned[j].ShardID })
+	seen := make(map[int64]model.ShardCut, len(cloned))
+	for _, cut := range cloned {
+		if _, exists := seen[cut.ShardID]; exists || cut.ShardID < 0 || cut.EndHeight < cut.PreviousHeight {
+			return nil, nil, fmt.Errorf("%w: shard %d", ErrCutSequence, cut.ShardID)
+		}
+		previous, hasPrevious := previousCuts[cut.ShardID]
+		if hasTip && (!hasPrevious || cut.PreviousHeight != previous.EndHeight) {
+			return nil, nil, fmt.Errorf("%w: shard %d", ErrCutSequence, cut.ShardID)
+		}
+		if cut.EndHeight == cut.PreviousHeight && hasPrevious && cut.EndBlockHash != previous.EndBlockHash {
+			return nil, nil, fmt.Errorf("%w: empty cut hash shard %d", ErrCutSequence, cut.ShardID)
+		}
+		seen[cut.ShardID] = cut
+	}
+	if hasTip && len(seen) != len(previousCuts) {
+		return nil, nil, ErrCutSequence
+	}
+
+	return cloned, seen, nil
 }
 
 func cloneFinalizedReceipts(input []model.FinalizedBlockReceipt) []model.FinalizedBlockReceipt {

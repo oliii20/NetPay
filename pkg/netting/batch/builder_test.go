@@ -56,6 +56,7 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	require.Equal(t, 0, metric.BestFitMatchedIntentCount)
 	require.Equal(t, 2, metric.SplitMatchedIntentCount)
 	require.Equal(t, 2, metric.MatchedIntentCount)
+	require.Equal(t, 1, metric.FullMatchedIntentCount)
 	require.Equal(t, 1, metric.FallbackIntentCount)
 	require.Equal(t, "17", metric.OriginalValue)
 	require.Equal(t, "14", metric.MatchedValue)
@@ -133,7 +134,9 @@ func TestBuilderSplitsSettlementChunks(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, packages, 8)
 	for _, pack := range packages {
-		require.NoError(t, batch.VerifySettlementPackage(pack))
+		require.Equal(t, proposal.Header.BatchID, pack.Header.BatchID)
+		require.Empty(t, pack.Header.Cuts)
+		require.NoError(t, batch.VerifySettlementPackage(pack, proposal.Header))
 	}
 }
 

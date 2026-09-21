@@ -33,6 +33,7 @@ type NettingBatchMetric struct {
 	SplitMatchedIntentCount   int
 	SplitAllocationCount      int
 	MatchedIntentCount        int
+	FullMatchedIntentCount    int
 	FallbackIntentCount       int
 	OriginalValue             string
 	MatchedValue              string

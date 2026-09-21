@@ -26,6 +26,7 @@ type FinalizedBlockReceiptMsg struct {
 type BatchProposalMsg struct {
 	NodeID   int64
 	Proposal model.BatchProposal
+	Header   model.BatchHeaderProposal
 }
 
 type MatchRootFinalizedMsg struct {

@@ -61,7 +61,7 @@ func TestPublisherReportsCommittedLifecyclePhases(t *testing.T) {
 	require.Equal(t, createdAt, payload.Metrics[0].CreatedAt)
 	require.Equal(t, model.MetricPhaseSettlement, payload.Metrics[1].Phase)
 	require.False(t, payload.Metrics[1].Final)
-	require.Positive(t, payload.Metrics[1].ProofVerificationTime)
+	require.Zero(t, payload.Metrics[1].ProofVerificationTime)
 	require.Equal(t, model.MetricPhaseFallback, payload.Metrics[2].Phase)
 	require.True(t, payload.Metrics[2].Final)
 	require.Positive(t, payload.Metrics[2].StateWriteCount)

@@ -27,12 +27,23 @@ const (
 )
 
 type Proposal struct {
-	Block        *block.Block
-	NettingBatch *model.BatchProposal
+	Block         *block.Block
+	NettingBatch  *model.BatchProposal
+	NettingHeader *model.BatchHeaderProposal
 }
 
 func (p *Proposal) Hash() ([]byte, error) {
-	if (p.Block == nil) == (p.NettingBatch == nil) {
+	payloads := 0
+	if p.Block != nil {
+		payloads++
+	}
+	if p.NettingBatch != nil {
+		payloads++
+	}
+	if p.NettingHeader != nil {
+		payloads++
+	}
+	if payloads != 1 {
 		return nil, errors.New("proposal must contain exactly one payload")
 	}
 	var encoded []byte
@@ -42,10 +53,16 @@ func (p *Proposal) Hash() ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("encode block proposal: %w", err)
 		}
-	} else {
+	} else if p.NettingBatch != nil {
 		var out bytes.Buffer
 		if err := gob.NewEncoder(&out).Encode(p.NettingBatch); err != nil {
 			return nil, fmt.Errorf("encode netting proposal: %w", err)
+		}
+		encoded = out.Bytes()
+	} else {
+		var out bytes.Buffer
+		if err := gob.NewEncoder(&out).Encode(p.NettingHeader); err != nil {
+			return nil, fmt.Errorf("encode netting header proposal: %w", err)
 		}
 		encoded = out.Bytes()
 	}

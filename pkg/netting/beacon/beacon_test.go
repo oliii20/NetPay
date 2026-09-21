@@ -24,7 +24,7 @@ func TestValidatorAndStoreCommitSequentialMatchRootBlocks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "beacon.db")
 	store, err := beacon.OpenStore(path)
 	require.NoError(t, err)
-	validator := beacon.NewValidator(store)
+	validator := beacon.NewFullValidator(store)
 
 	first := proposal(t, 1, merkle.Hash{}, 0, beaconHash(0x11), beaconHash(0x21), 1)
 	require.NoError(t, validator.Validate(first))
@@ -65,7 +65,7 @@ func TestValidatorRejectsTamperingCoverageAndExpiry(t *testing.T) {
 	store, err := beacon.OpenStore(filepath.Join(t.TempDir(), "beacon.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	validator := beacon.NewValidator(store)
+	validator := beacon.NewFullValidator(store)
 	valid := proposal(t, 1, merkle.Hash{}, 0, beaconHash(0x11), beaconHash(0x21), 1)
 
 	tampered := valid.Clone()

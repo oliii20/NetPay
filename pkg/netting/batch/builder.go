@@ -140,6 +140,9 @@ func summarizeBatchMetric(
 		if result.MatchedAmount.Sign() > 0 {
 			metric.MatchedIntentCount++
 		}
+		if result.FallbackAmount.Sign() == 0 {
+			metric.FullMatchedIntentCount++
+		}
 		if result.FallbackAmount.Sign() > 0 {
 			metric.FallbackIntentCount++
 		}
@@ -198,7 +201,8 @@ func BuildSettlementPackages(proposal model.BatchProposal) ([]model.SettlementPa
 				return nil, proofErr
 			}
 			packages = append(packages, model.SettlementPackage{
-				Header: proposal.Header, Settlement: settlement.Clone(), ChunkProof: chunkProof,
+				Header:     model.MatchRootBlockBody{BatchID: proposal.Header.BatchID},
+				Settlement: settlement.Clone(), ChunkProof: chunkProof,
 				ShardCommitment: data.commitment, ShardProof: shardProof,
 			})
 		}
@@ -301,9 +305,13 @@ func cloneSettlements(input []model.ShardSettlement) []model.ShardSettlement {
 	return cloned
 }
 
-func VerifySettlementPackage(pack model.SettlementPackage) error {
-	if pack.Settlement.BatchID != pack.Header.BatchID ||
-		pack.Settlement.WindowID != pack.Header.WindowID ||
+func VerifySettlementPackage(pack model.SettlementPackage, confirmedHeaders ...model.MatchRootBlockBody) error {
+	header := pack.Header
+	if len(confirmedHeaders) > 0 {
+		header = confirmedHeaders[0]
+	}
+	if pack.Settlement.BatchID != header.BatchID ||
+		pack.Settlement.WindowID != header.WindowID ||
 		pack.Settlement.ShardID != pack.ShardCommitment.ShardID ||
 		pack.Settlement.ChunkCount != pack.ShardCommitment.ChunkCount {
 		return ErrInvalidSettlement
@@ -319,16 +327,16 @@ func VerifySettlementPackage(pack model.SettlementPackage) error {
 		commitment.ShardSettlementLeafDomain,
 		ShardCommitmentPayload(pack.ShardCommitment),
 		pack.ShardProof,
-		pack.Header.ShardSettlementRoot,
+		header.ShardSettlementRoot,
 	) {
 		return ErrInvalidSettlement
 	}
 	roots := commitment.Roots{
-		CutRoot: pack.Header.CutRoot, IntentResultRoot: pack.Header.IntentResultRoot,
-		ShardSettlementRoot: pack.Header.ShardSettlementRoot,
+		CutRoot: header.CutRoot, IntentResultRoot: header.IntentResultRoot,
+		ShardSettlementRoot: header.ShardSettlementRoot,
 	}
-	if commitment.MatchRoot(roots) != pack.Header.MatchRoot ||
-		commitment.BatchID(pack.Header.PreviousBatchID, pack.Header.WindowID, pack.Header.MatchRoot) != pack.Header.BatchID {
+	if commitment.MatchRoot(roots) != header.MatchRoot ||
+		commitment.BatchID(header.PreviousBatchID, header.WindowID, header.MatchRoot) != header.BatchID {
 		return ErrInvalidSettlement
 	}
 

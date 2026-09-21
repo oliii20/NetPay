@@ -3,7 +3,6 @@ package fallback
 import (
 	"errors"
 	"math/big"
-	"reflect"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -61,10 +60,10 @@ func VerifyCreditProof(shardID int64, item model.ReservedFallback, confirmed mod
 	if item.Amount == nil || item.Amount.Sign() <= 0 {
 		return ErrFallbackProof
 	}
-	if !reflect.DeepEqual(item.Proof.Header, confirmed) || item.BatchID != confirmed.BatchID {
+	if item.Proof.Header.BatchID != confirmed.BatchID || item.BatchID != confirmed.BatchID {
 		return ErrFallbackProof
 	}
-	if err := batch.VerifySettlementPackage(item.Proof); err != nil {
+	if err := batch.VerifySettlementPackage(item.Proof, confirmed); err != nil {
 		return ErrFallbackProof
 	}
 	var matched bool

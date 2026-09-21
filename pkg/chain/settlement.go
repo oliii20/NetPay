@@ -58,7 +58,7 @@ func (c *Chain) settlementTxExecute(v *vm.Executor, tx transaction.Transaction) 
 	if tx.Settlement == nil || tx.Value == nil || tx.Value.Sign() != 0 || tx.Sender != account.EmptyAccountAddr {
 		return ErrSettlementEnvelope
 	}
-	confirmed, exists := c.confirmedRoots[tx.Settlement.Header.BatchID]
+	confirmed, exists := c.confirmedRoots[tx.Settlement.Settlement.BatchID]
 	if !exists {
 		return settlement.ErrUnknownMatchRoot
 	}

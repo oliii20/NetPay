@@ -41,6 +41,13 @@ func WrapNettingProposal(proposal model.BatchProposal) *Proposal {
 	return &Proposal{NettingBatch: &cloned}
 }
 
+func WrapNettingHeaderProposal(proposal model.BatchHeaderProposal) *Proposal {
+	cloned := proposal
+	cloned.Header.Cuts = append([]model.ShardCut(nil), proposal.Header.Cuts...)
+
+	return &Proposal{NettingHeader: &cloned}
+}
+
 func getMsgType(msg any) (string, error) {
 	var msgType string
 

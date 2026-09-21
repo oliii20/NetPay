@@ -33,13 +33,20 @@ func TestOpQueuesValidatesCommitsAndBroadcasts(t *testing.T) {
 	op := beaconop.New(network.NewConnHandler(p2p), opResolver{}, store, 2, 0)
 	op.EnableMetrics()
 	proposal := opProposal(t)
-	wrapped, err := message.WrapMsg(&message.BatchProposalMsg{NodeID: 0, Proposal: proposal})
+	wrapped, err := message.WrapMsg(&message.BatchProposalMsg{
+		NodeID: 0,
+		Header: model.BatchHeaderProposal{
+			Header: proposal.Header,
+		},
+	})
 	require.NoError(t, err)
 
 	require.NoError(t, op.HandleMsgOutsideShard(context.Background(), wrapped))
 	pbftProposal, err := op.BuildProposal(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, pbftProposal)
+	require.Nil(t, pbftProposal.NettingBatch)
+	require.NotNil(t, pbftProposal.NettingHeader)
 	require.NoError(t, op.ValidateProposal(context.Background(), pbftProposal))
 	require.NoError(t, op.ProposalCommitAndDeliver(context.Background(), true, pbftProposal))
 	tip, found, err := store.Tip()

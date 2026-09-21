@@ -31,7 +31,7 @@ type Op struct {
 	validator      *beacon.Validator
 	shardCount     int64
 	nodeID         int64
-	queue          []model.BatchProposal
+	queue          []model.BatchHeaderProposal
 	metrics        *metrics.Publisher
 	receivedAt     map[[32]byte]time.Time
 	validationTime map[[32]byte]time.Duration
@@ -76,13 +76,18 @@ func (o *Op) HandleMsgOutsideShard(_ context.Context, wrapped *rpcserver.Wrapped
 	if msg.NodeID != 0 {
 		return fmt.Errorf("%w: node %d", ErrInvalidBatchSender, msg.NodeID)
 	}
+	proposal := msg.Header
+	if proposal.Header.BatchID == (model.MatchRootBlockBody{}).BatchID {
+		proposal = model.BatchHeaderProposal{Header: msg.Proposal.Header}
+	}
 	for _, queued := range o.queue {
-		if queued.Header.BatchID == msg.Proposal.Header.BatchID {
+		if queued.Header.BatchID == proposal.Header.BatchID {
 			return nil
 		}
 	}
-	o.queue = append(o.queue, msg.Proposal.Clone())
-	o.receivedAt[msg.Proposal.Header.BatchID] = time.Now()
+	proposal.Header.Cuts = append([]model.ShardCut(nil), proposal.Header.Cuts...)
+	o.queue = append(o.queue, proposal)
+	o.receivedAt[proposal.Header.BatchID] = time.Now()
 
 	return nil
 }
@@ -92,19 +97,19 @@ func (o *Op) BuildProposal(context.Context) (*message.Proposal, error) {
 		return nil, nil
 	}
 	started := time.Now()
-	if err := o.validator.Validate(o.queue[0]); err != nil {
+	if err := o.validator.ValidateHeader(o.queue[0]); err != nil {
 		return nil, fmt.Errorf("validate queued Beacon batch: %w", err)
 	}
 	o.validationTime[o.queue[0].Header.BatchID] = time.Since(started)
 
-	return message.WrapNettingProposal(o.queue[0]), nil
+	return message.WrapNettingHeaderProposal(o.queue[0]), nil
 }
 
 func (o *Op) ValidateProposal(_ context.Context, proposal *message.Proposal) error {
-	if proposal == nil || proposal.Block != nil || proposal.NettingBatch == nil {
+	if proposal == nil || proposal.Block != nil || proposal.NettingHeader == nil {
 		return ErrInvalidProposal
 	}
-	if err := o.validator.Validate(*proposal.NettingBatch); err != nil {
+	if err := o.validator.ValidateHeader(*proposal.NettingHeader); err != nil {
 		return fmt.Errorf("validate Beacon proposal: %w", err)
 	}
 
@@ -116,10 +121,10 @@ func (o *Op) ProposalCommitAndDeliver(
 	isLeader bool,
 	proposal *message.Proposal,
 ) error {
-	if proposal == nil || proposal.NettingBatch == nil {
+	if proposal == nil || proposal.NettingHeader == nil {
 		return ErrInvalidProposal
 	}
-	committed, err := o.store.Commit(*proposal.NettingBatch, time.Now())
+	committed, err := o.store.CommitHeader(*proposal.NettingHeader, time.Now())
 	if err != nil {
 		return fmt.Errorf("commit MatchRoot block: %w", err)
 	}
@@ -134,7 +139,7 @@ func (o *Op) ProposalCommitAndDeliver(
 	if err = o.broadcastFinalized(ctx, wrapped); err != nil {
 		return err
 	}
-	if metric, metricErr := o.buildMetric(*proposal.NettingBatch, committed); metricErr != nil {
+	if metric, metricErr := o.buildMetric(*proposal.NettingHeader, committed); metricErr != nil {
 		slog.WarnContext(ctx, "build Beacon metrics failed", "err", metricErr)
 	} else if metricErr = o.metrics.PublishBeacon(ctx, metric); metricErr != nil {
 		slog.WarnContext(ctx, "publish Beacon metrics failed", "err", metricErr)
@@ -146,14 +151,14 @@ func (o *Op) ProposalCommitAndDeliver(
 }
 
 func (o *Op) buildMetric(
-	proposal model.BatchProposal,
+	proposal model.BatchHeaderProposal,
 	committed beacon.MatchRootBlock,
 ) (model.NettingBeaconMetric, error) {
-	digest, err := message.WrapNettingProposal(proposal).Hash()
+	digest, err := message.WrapNettingHeaderProposal(proposal).Hash()
 	if err != nil {
 		return model.NettingBeaconMetric{}, err
 	}
-	preprepareBytes, err := messageSize(&message.PreprepareMsg{P: *message.WrapNettingProposal(proposal), Digest: digest})
+	preprepareBytes, err := messageSize(&message.PreprepareMsg{P: *message.WrapNettingHeaderProposal(proposal), Digest: digest})
 	if err != nil {
 		return model.NettingBeaconMetric{}, err
 	}

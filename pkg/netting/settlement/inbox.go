@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"time"
 
@@ -75,17 +74,14 @@ func (i *Inbox) AddPackage(pack model.SettlementPackage) error {
 	if pack.Settlement.ShardID != i.shardID {
 		return ErrPackageWrongShard
 	}
-	key := packageKey{BatchID: pack.Header.BatchID, ChunkIndex: pack.Settlement.ChunkIndex}
+	key := packageKey{BatchID: pack.Settlement.BatchID, ChunkIndex: pack.Settlement.ChunkIndex}
 	if _, exists := i.enqueued[key]; exists {
 		return nil
 	}
 	if _, exists := i.pending[key]; exists {
 		return nil
 	}
-	if confirmed, exists := i.confirmed[key.BatchID]; exists {
-		if !reflect.DeepEqual(confirmed, pack.Header) {
-			return ErrPackageRootMismatch
-		}
+	if _, exists := i.confirmed[key.BatchID]; exists {
 		return i.enqueue(pack)
 	}
 	i.pending[key] = pack.Clone()
@@ -94,8 +90,7 @@ func (i *Inbox) AddPackage(pack model.SettlementPackage) error {
 }
 
 func (i *Inbox) enqueue(pack model.SettlementPackage) error {
-	confirmed := i.confirmed[pack.Header.BatchID]
-	if !reflect.DeepEqual(confirmed, pack.Header) {
+	if _, exists := i.confirmed[pack.Settlement.BatchID]; !exists {
 		return ErrPackageRootMismatch
 	}
 	tx := transaction.NewSettlementTransaction(pack, time.Now())
@@ -103,7 +98,7 @@ func (i *Inbox) enqueue(pack model.SettlementPackage) error {
 		return fmt.Errorf("add settlement transaction: %w", err)
 	}
 	i.enqueued[packageKey{
-		BatchID: pack.Header.BatchID, ChunkIndex: pack.Settlement.ChunkIndex,
+		BatchID: pack.Settlement.BatchID, ChunkIndex: pack.Settlement.ChunkIndex,
 	}] = struct{}{}
 
 	return nil

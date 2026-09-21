@@ -55,6 +55,11 @@ func TestSolverBootstrapsBuildsAndRestoresBatch(t *testing.T) {
 	require.Len(t, p2p.sent, 2)
 	require.Equal(t, message.NettingBatchMetricMessageType, p2p.sent[0].GetMsgType())
 	require.Equal(t, message.BatchProposalMessageType, p2p.sent[1].GetMsgType())
+	var batchMsg message.BatchProposalMsg
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(p2p.sent[1].GetPayload())).Decode(&batchMsg))
+	require.Equal(t, proposal.Header, batchMsg.Header.Header)
+	require.Empty(t, batchMsg.Proposal.Sidecar.IntentResults)
+	require.Empty(t, batchMsg.Proposal.Sidecar.ShardSettlements)
 	var metricMsg message.NettingBatchMetricMsg
 	require.NoError(t, gob.NewDecoder(bytes.NewReader(p2p.sent[0].GetPayload())).Decode(&metricMsg))
 	require.Equal(t, proposal.Header.BatchID, metricMsg.Metric.BatchID)

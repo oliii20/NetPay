@@ -66,6 +66,7 @@ func TestCollectorMergesOutOfOrderEventsAndWritesStableCSVs(t *testing.T) {
 
 	batchRows := readCSV(t, filepath.Join(dir, nettingstats.BatchMetricsFile))
 	require.Len(t, batchRows, 2)
+	require.Equal(t, "0.000000", csvValue(batchRows, "FullMatchedIntentRatio"))
 	require.Equal(t, "0.700000", csvValue(batchRows, "MatchedValueRatio"))
 	require.Equal(t, "7", csvValue(batchRows, "StateReadCount"))
 	require.Equal(t, "8", csvValue(batchRows, "StateWriteCount"))
@@ -87,7 +88,8 @@ func TestCollectorFlushWritesPartialSnapshotsBeforeClose(t *testing.T) {
 	batchID := merkle.Hash{3}
 	update, err := message.WrapMsg(&message.NettingBatchMetricMsg{NodeID: 0, Metric: model.NettingBatchMetric{
 		BatchID: batchID, WindowID: 7, CloseReason: "batch_size", IntentCount: 2,
-		OriginalValue: "20", MatchedValue: "10", FallbackValue: "10",
+		FullMatchedIntentCount: 1,
+		OriginalValue:          "20", MatchedValue: "10", FallbackValue: "10",
 	}})
 	require.NoError(t, err)
 	require.NoError(t, collector.UpdateMeasureRecord(update))
@@ -96,6 +98,7 @@ func TestCollectorFlushWritesPartialSnapshotsBeforeClose(t *testing.T) {
 	batchRows := readCSV(t, filepath.Join(dir, nettingstats.BatchMetricsFile))
 	require.Len(t, batchRows, 2)
 	require.Equal(t, "7", csvValue(batchRows, "WindowID"))
+	require.Equal(t, "0.500000", csvValue(batchRows, "FullMatchedIntentRatio"))
 	require.Equal(t, "0.500000", csvValue(batchRows, "MatchedValueRatio"))
 
 	intentRows := readCSV(t, filepath.Join(dir, nettingstats.IntentMetricsFile))

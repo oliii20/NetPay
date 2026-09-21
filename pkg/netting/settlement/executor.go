@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"reflect"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -54,7 +53,7 @@ func (e Executor) Execute(
 	pack model.SettlementPackage,
 	confirmed model.MatchRootBlockBody,
 ) error {
-	if !reflect.DeepEqual(pack.Header, confirmed) {
+	if pack.Header.BatchID != confirmed.BatchID {
 		return ErrUnknownMatchRoot
 	}
 	settlement := pack.Settlement
@@ -68,7 +67,7 @@ func (e Executor) Execute(
 	if IsExecuted(stateDB, settlement.BatchID, shardID, settlement.ChunkIndex) {
 		return nil
 	}
-	if err := verifyProofs(pack); err != nil {
+	if err := verifyProofs(pack, confirmed); err != nil {
 		return err
 	}
 	if e.Simplified {
@@ -175,8 +174,8 @@ func IsExecuted(stateDB *state.StateDB, batchID merkle.Hash, shardID int64, chun
 	return value != (common.Hash{})
 }
 
-func verifyProofs(pack model.SettlementPackage) error {
-	if err := batch.VerifySettlementPackage(pack); err != nil {
+func verifyProofs(pack model.SettlementPackage, confirmed model.MatchRootBlockBody) error {
+	if err := batch.VerifySettlementPackage(pack, confirmed); err != nil {
 		return ErrInvalidProof
 	}
 

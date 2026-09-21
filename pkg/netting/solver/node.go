@@ -294,7 +294,12 @@ func (n *Node) drainFrozen(ctx context.Context) error {
 		}
 		n.manager.AcknowledgeCheckpoint()
 		metric.FrozenWindowQueueLength = n.manager.FrozenWindowCount()
-		metric.BatchProposalBytes, err = encodedSize(message.BatchProposalMsg{NodeID: 0, Proposal: proposal})
+		metric.BatchProposalBytes, err = encodedSize(message.BatchProposalMsg{
+			NodeID: 0,
+			Header: model.BatchHeaderProposal{
+				Header: cloneHeader(proposal.Header),
+			},
+		})
 		if err != nil {
 			return fmt.Errorf("measure batch proposal bytes: %w", err)
 		}
@@ -329,7 +334,12 @@ func (n *Node) dispatchPending(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	wrapped, err := message.WrapMsg(&message.BatchProposalMsg{NodeID: 0, Proposal: proposal})
+	wrapped, err := message.WrapMsg(&message.BatchProposalMsg{
+		NodeID: 0,
+		Header: model.BatchHeaderProposal{
+			Header: cloneHeader(proposal.Header),
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("wrap batch proposal: %w", err)
 	}
@@ -341,6 +351,13 @@ func (n *Node) dispatchPending(ctx context.Context) error {
 	n.dispatched[batchID] = struct{}{}
 
 	return nil
+}
+
+func cloneHeader(header model.MatchRootBlockBody) model.MatchRootBlockBody {
+	cloned := header
+	cloned.Cuts = append([]model.ShardCut(nil), header.Cuts...)
+
+	return cloned
 }
 
 func (n *Node) restore(state batchstore.SolverState) error {

@@ -10,7 +10,6 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/batch"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
@@ -94,13 +93,11 @@ func blockMeasurements(
 			if tx.ReservedFallback == nil {
 				continue
 			}
-			started := time.Now()
-			_ = batch.VerifySettlementPackage(tx.ReservedFallback.Proof)
 			measurements = append(measurements, model.NettingExecutionMetric{
 				Phase: model.MetricPhaseFallback, BatchID: tx.ReservedFallback.BatchID,
-				WindowID: tx.ReservedFallback.Proof.Header.WindowID, IntentID: tx.ReservedFallback.IntentID,
+				WindowID: tx.ReservedFallback.Proof.Settlement.WindowID, IntentID: tx.ReservedFallback.IntentID,
 				ShardID: shardID, CommittedAt: committedAt, Final: true,
-				StateReadCount: 2, StateWriteCount: 2, ProofVerificationTime: time.Since(started),
+				StateReadCount: 2, StateWriteCount: 2,
 			})
 		}
 	}
@@ -116,9 +113,6 @@ func settlementMeasurements(
 	if tx.Settlement == nil {
 		return nil
 	}
-	started := time.Now()
-	_ = batch.VerifySettlementPackage(*tx.Settlement)
-	proofTime := time.Since(started)
 	settlement := tx.Settlement.Settlement
 	measurements := make([]model.NettingExecutionMetric, 0, len(settlement.Outgoing)+len(settlement.FallbackIncoming))
 	fallbackCount := int64(0)
@@ -138,7 +132,6 @@ func settlementMeasurements(
 		if idx == 0 {
 			metric.StateReadCount = reads
 			metric.StateWriteCount = writes
-			metric.ProofVerificationTime = proofTime
 		}
 		measurements = append(measurements, metric)
 	}

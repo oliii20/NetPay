@@ -110,10 +110,22 @@ func (s *Store) HasIntent(id intent.ID) (bool, error) {
 }
 
 func (s *Store) Commit(proposal model.BatchProposal, now time.Time) (MatchRootBlock, error) {
+	return s.commitHeader(proposal.Header, &proposal.Sidecar, now)
+}
+
+func (s *Store) CommitHeader(proposal model.BatchHeaderProposal, now time.Time) (MatchRootBlock, error) {
+	return s.commitHeader(proposal.Header, nil, now)
+}
+
+func (s *Store) commitHeader(
+	header model.MatchRootBlockBody,
+	sidecar *model.BatchSidecar,
+	now time.Time,
+) (MatchRootBlock, error) {
 	var committed MatchRootBlock
 	err := s.db.Update(func(tx *bbolt.Tx) error {
-		if tx.Bucket(blockBucket).Get(proposal.Header.BatchID[:]) != nil {
-			return fmt.Errorf("%w: %s", ErrBatchCommitted, proposal.Header.BatchID.String())
+		if tx.Bucket(blockBucket).Get(header.BatchID[:]) != nil {
+			return fmt.Errorf("%w: %s", ErrBatchCommitted, header.BatchID.String())
 		}
 		var tip MatchRootBlock
 		tipBytes := tx.Bucket(metaBucket).Get(tipKey)
@@ -121,10 +133,10 @@ func (s *Store) Commit(proposal model.BatchProposal, now time.Time) (MatchRootBl
 			if err := decode(tipBytes, &tip); err != nil {
 				return fmt.Errorf("decode Beacon tip: %w", err)
 			}
-			if proposal.Header.PreviousBatchID != tip.Body.BatchID || proposal.Header.WindowID != tip.Body.WindowID+1 {
+			if header.PreviousBatchID != tip.Body.BatchID || header.WindowID != tip.Body.WindowID+1 {
 				return ErrBeaconTipChanged
 			}
-		} else if proposal.Header.PreviousBatchID != (merkle.Hash{}) || proposal.Header.WindowID != 1 {
+		} else if header.PreviousBatchID != (merkle.Hash{}) || header.WindowID != 1 {
 			return ErrBeaconTipChanged
 		}
 
@@ -137,25 +149,27 @@ func (s *Store) Commit(proposal model.BatchProposal, now time.Time) (MatchRootBl
 			}
 		}
 		committed = MatchRootBlock{
-			Number: tip.Number + 1, ParentHash: parentHash, Body: proposal.Header, CommitTime: now,
+			Number: tip.Number + 1, ParentHash: parentHash, Body: header, CommitTime: now,
 		}
 		blockBytes, err := encode(committed)
 		if err != nil {
 			return fmt.Errorf("encode committed MatchRoot block: %w", err)
 		}
-		sidecarBytes, err := encode(proposal.Sidecar)
-		if err != nil {
-			return fmt.Errorf("encode committed sidecar: %w", err)
-		}
-		if err = tx.Bucket(blockBucket).Put(proposal.Header.BatchID[:], blockBytes); err != nil {
+		if err = tx.Bucket(blockBucket).Put(header.BatchID[:], blockBytes); err != nil {
 			return fmt.Errorf("save MatchRoot block: %w", err)
 		}
-		if err = tx.Bucket(sidecarBucket).Put(proposal.Header.BatchID[:], sidecarBytes); err != nil {
-			return fmt.Errorf("save batch sidecar: %w", err)
-		}
-		for _, result := range proposal.Sidecar.IntentResults {
-			if err = tx.Bucket(consumedBucket).Put(result.IntentID[:], proposal.Header.BatchID[:]); err != nil {
-				return fmt.Errorf("save consumed intent: %w", err)
+		if sidecar != nil {
+			sidecarBytes, encodeErr := encode(sidecar)
+			if encodeErr != nil {
+				return fmt.Errorf("encode committed sidecar: %w", encodeErr)
+			}
+			if err = tx.Bucket(sidecarBucket).Put(header.BatchID[:], sidecarBytes); err != nil {
+				return fmt.Errorf("save batch sidecar: %w", err)
+			}
+			for _, result := range sidecar.IntentResults {
+				if err = tx.Bucket(consumedBucket).Put(result.IntentID[:], header.BatchID[:]); err != nil {
+					return fmt.Errorf("save consumed intent: %w", err)
+				}
 			}
 		}
 		if err = tx.Bucket(metaBucket).Put(tipKey, blockBytes); err != nil {
