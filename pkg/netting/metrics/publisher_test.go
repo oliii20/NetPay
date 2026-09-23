@@ -39,7 +39,7 @@ func TestPublisherReportsCommittedLifecyclePhases(t *testing.T) {
 	pack := packages[0]
 	fallbackItem := model.ReservedFallback{
 		IntentID: pack.Settlement.Outgoing[0].IntentID, BatchID: proposal.Header.BatchID,
-		SourceShard: 0, DestinationShard: 1, Amount: big.NewInt(3), Proof: pack,
+		SourceShard: 0, DestinationShard: 1, Amount: big.NewInt(9), Proof: pack,
 	}
 	createdAt := time.Unix(10, 0)
 	committedAt := time.Unix(20, 0)
@@ -56,7 +56,7 @@ func TestPublisherReportsCommittedLifecyclePhases(t *testing.T) {
 
 	var payload message.NettingExecutionMetricMsg
 	require.NoError(t, gob.NewDecoder(bytes.NewReader(conn.messages[0].GetPayload())).Decode(&payload))
-	require.Len(t, payload.Metrics, 3)
+	require.Len(t, payload.Metrics, 4)
 	require.Equal(t, model.MetricPhaseReservation, payload.Metrics[0].Phase)
 	require.Equal(t, createdAt, payload.Metrics[0].CreatedAt)
 	require.Equal(t, model.MetricPhaseSettlement, payload.Metrics[1].Phase)
@@ -64,7 +64,9 @@ func TestPublisherReportsCommittedLifecyclePhases(t *testing.T) {
 	require.Zero(t, payload.Metrics[1].ProofVerificationTime)
 	require.Equal(t, model.MetricPhaseFallback, payload.Metrics[2].Phase)
 	require.True(t, payload.Metrics[2].Final)
-	require.Positive(t, payload.Metrics[2].StateWriteCount)
+	require.Equal(t, model.MetricPhaseFallback, payload.Metrics[3].Phase)
+	require.True(t, payload.Metrics[3].Final)
+	require.Positive(t, payload.Metrics[3].StateWriteCount)
 }
 
 func TestPublisherReportsDirectFallbackIncomingMetric(t *testing.T) {

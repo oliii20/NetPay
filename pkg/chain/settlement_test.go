@@ -60,11 +60,13 @@ func TestSettlementConsumesReservationsAndCreditsLocalRecipients(t *testing.T) {
 	forwardReservation, err := shard0.GetReservation(ctx, forward)
 	require.NoError(t, err)
 	require.Equal(t, registry.ReservationConsumed, forwardReservation.Status)
-	require.Equal(t, big.NewInt(7), forwardReservation.MatchedAmount)
-	require.Equal(t, big.NewInt(3), forwardReservation.FallbackAmount)
+	require.Equal(t, big.NewInt(1), forwardReservation.MatchedAmount)
+	require.Equal(t, big.NewInt(9), forwardReservation.FallbackAmount)
 	reverseReservation, err := shard1.GetReservation(ctx, reverse)
 	require.NoError(t, err)
 	require.Equal(t, registry.ReservationConsumed, reverseReservation.Status)
+	require.Equal(t, big.NewInt(1), reverseReservation.MatchedAmount)
+	require.Equal(t, big.NewInt(6), reverseReservation.FallbackAmount)
 
 	initial, ok := new(big.Int).SetString(account.NormalInitBalanceStr, 10)
 	require.True(t, ok)
@@ -91,6 +93,63 @@ func TestSettlementConsumesReservationsAndCreditsLocalRecipients(t *testing.T) {
 	pendingFallbacks, err := shard0.GetPendingFallbacks(ctx)
 	require.NoError(t, err)
 	require.Empty(t, pendingFallbacks)
+}
+
+func TestSettlementExecutesMultilateralCycle(t *testing.T) {
+	ctx := context.Background()
+	chains := []*Chain{
+		newSettlementTestChain(t, 0),
+		newSettlementTestChain(t, 1),
+		newSettlementTestChain(t, 2),
+	}
+	payments := []intent.PaymentIntent{
+		settlementIntent(0, 1, 1, 0x81, 0x91),
+		settlementIntent(1, 2, 1, 0x82, 0x92),
+		settlementIntent(2, 0, 1, 0x83, 0x93),
+	}
+	for _, payment := range payments {
+		reserveIntent(t, chains[payment.SourceShard], payment)
+	}
+	proposal, err := (batch.Builder{}).Build(window.FrozenWindow{
+		WindowID: 1,
+		Cuts: []model.ShardCut{
+			{ShardID: 0, EndHeight: 1, EndBlockHash: settlementHash(0x31)},
+			{ShardID: 1, EndHeight: 1, EndBlockHash: settlementHash(0x32)},
+			{ShardID: 2, EndHeight: 1, EndBlockHash: settlementHash(0x33)},
+		},
+		Intents: payments,
+	}, merkle.Hash{})
+	require.NoError(t, err)
+	packages, err := batch.BuildSettlementPackages(proposal)
+	require.NoError(t, err)
+	require.Len(t, packages, 3)
+	for _, chain := range chains {
+		require.NoError(t, chain.ConfirmMatchRoot(ctx, proposal.Header))
+	}
+	for _, pack := range packages {
+		chain := chains[pack.Settlement.ShardID]
+		tx := transaction.NewSettlementTransaction(pack, time.Now())
+		settlementBlock, blockErr := chain.GenerateBlock(
+			ctx, testMiner, block.TxBlockType,
+			block.Body{TxList: []transaction.Transaction{*tx}}, block.MigrationOpt{},
+		)
+		require.NoError(t, blockErr)
+		require.NoError(t, chain.AddBlock(ctx, settlementBlock))
+	}
+
+	initial, ok := new(big.Int).SetString(account.NormalInitBalanceStr, 10)
+	require.True(t, ok)
+	for _, payment := range payments {
+		reservation, reservationErr := chains[payment.SourceShard].GetReservation(ctx, payment)
+		require.NoError(t, reservationErr)
+		require.Equal(t, registry.ReservationConsumed, reservation.Status)
+		require.Equal(t, payment.Amount, reservation.MatchedAmount)
+		require.Zero(t, reservation.FallbackAmount.Sign())
+
+		states, stateErr := chains[payment.DestinationShard].GetAccountStates(ctx, []account.Address{payment.Recipient})
+		require.NoError(t, stateErr)
+		require.Equal(t, new(big.Int).Add(initial, payment.Amount), states[0].Balance)
+	}
 }
 
 func TestSettlementRejectsUnconfirmedOrTamperedPackage(t *testing.T) {

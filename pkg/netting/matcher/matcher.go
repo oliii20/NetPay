@@ -1,4 +1,4 @@
-// Package matcher implements deterministic bilateral cross-shard payment netting.
+// Package matcher implements deterministic cross-shard payment netting.
 package matcher
 
 import (
@@ -71,6 +71,35 @@ type matchGroup struct {
 	higherToLower []*workItem
 }
 
+type assetKey struct {
+	AssetID intent.AssetID
+}
+
+type directedPairKey struct {
+	From    int64
+	To      int64
+	AssetID intent.AssetID
+}
+
+type circulationEdge struct {
+	from     int
+	to       int
+	capacity *big.Int
+	flow     *big.Int
+	cost     int
+	pair     directedPairKey
+	order    int
+}
+
+type residualArc struct {
+	edge    *circulationEdge
+	from    int
+	to      int
+	cost    int
+	reverse bool
+	order   int
+}
+
 func Match(payments []intent.PaymentIntent) (Output, error) {
 	return MatchWithMode(payments, FullMode)
 }
@@ -80,6 +109,21 @@ func MatchWithMode(payments []intent.PaymentIntent, mode Mode) (Output, error) {
 	items, groups, err := prepare(payments)
 	if err != nil {
 		return Output{}, err
+	}
+	if mode == FullMode {
+		allocations, matchErr := matchMultilateral(items)
+		if matchErr != nil {
+			return Output{}, matchErr
+		}
+		if invariantErr := validateMultilateral(items); invariantErr != nil {
+			return Output{}, invariantErr
+		}
+		results, resultErr := buildResults(items)
+		if resultErr != nil {
+			return Output{}, resultErr
+		}
+
+		return Output{Results: results, Allocations: allocations}, nil
 	}
 
 	keys := sortedGroupKeys(groups)
@@ -286,6 +330,366 @@ func matchRemaining(group *matchGroup, allowSplit bool) ([]Allocation, error) {
 	return allocations, nil
 }
 
+func matchMultilateral(items []*workItem) ([]Allocation, error) {
+	itemsByPair := make(map[directedPairKey][]*workItem)
+	assets := make(map[assetKey][]*workItem)
+	for _, item := range items {
+		key := directedPairKey{
+			From: item.payment.SourceShard, To: item.payment.DestinationShard, AssetID: item.payment.AssetID,
+		}
+		itemsByPair[key] = append(itemsByPair[key], item)
+		assets[assetKey{AssetID: item.payment.AssetID}] = append(assets[assetKey{AssetID: item.payment.AssetID}], item)
+	}
+	for key := range itemsByPair {
+		sortItemsByAmountThenID(itemsByPair[key])
+	}
+
+	assetKeys := make([]assetKey, 0, len(assets))
+	for key := range assets {
+		assetKeys = append(assetKeys, key)
+	}
+	sort.Slice(assetKeys, func(i, j int) bool {
+		return bytes.Compare(assetKeys[i].AssetID[:], assetKeys[j].AssetID[:]) < 0
+	})
+
+	edgesByPair := make(map[directedPairKey][]*circulationEdge)
+	order := 0
+	for _, key := range assetKeys {
+		edges, err := buildAssetCirculationEdges(key.AssetID, assets[key], &order)
+		if err != nil {
+			return nil, err
+		}
+		if err = maximizeCirculation(edges); err != nil {
+			return nil, err
+		}
+		for _, edge := range edges {
+			if edge.flow.Sign() > 0 {
+				edgesByPair[edge.pair] = append(edgesByPair[edge.pair], edge)
+			}
+		}
+	}
+
+	for pair, edges := range edgesByPair {
+		totalFlow := new(big.Int)
+		rewardedFlow := new(big.Int)
+		for _, edge := range edges {
+			totalFlow.Add(totalFlow, edge.flow)
+			if edge.cost > 0 {
+				rewardedFlow.Add(rewardedFlow, edge.flow)
+			}
+		}
+		if err := assignPairFlow(itemsByPair[pair], rewardedFlow, totalFlow); err != nil {
+			return nil, fmt.Errorf("assign pair %d -> %d: %w", pair.From, pair.To, err)
+		}
+	}
+
+	allocations := make([]Allocation, 0)
+	for _, item := range items {
+		if item.matched.Sign() > 0 {
+			allocations = append(allocations, allocationForMatchedItem(item))
+		}
+	}
+	sort.Slice(allocations, func(i, j int) bool {
+		left, right := allocationPrimaryID(allocations[i]), allocationPrimaryID(allocations[j])
+		return compareID(left, right) < 0
+	})
+
+	return allocations, nil
+}
+
+func buildAssetCirculationEdges(
+	assetID intent.AssetID,
+	items []*workItem,
+	order *int,
+) ([]*circulationEdge, error) {
+	shardIndex := make(map[int64]int)
+	shards := make([]int64, 0)
+	addShard := func(shardID int64) {
+		if _, exists := shardIndex[shardID]; exists {
+			return
+		}
+		shardIndex[shardID] = len(shards)
+		shards = append(shards, shardID)
+	}
+	for _, item := range items {
+		addShard(item.payment.SourceShard)
+		addShard(item.payment.DestinationShard)
+	}
+
+	byPair := make(map[directedPairKey][]*workItem)
+	for _, item := range items {
+		key := directedPairKey{From: item.payment.SourceShard, To: item.payment.DestinationShard, AssetID: assetID}
+		byPair[key] = append(byPair[key], item)
+	}
+	pairs := make([]directedPairKey, 0, len(byPair))
+	for pair := range byPair {
+		pairs = append(pairs, pair)
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].From != pairs[j].From {
+			return pairs[i].From < pairs[j].From
+		}
+		if pairs[i].To != pairs[j].To {
+			return pairs[i].To < pairs[j].To
+		}
+		return bytes.Compare(pairs[i].AssetID[:], pairs[j].AssetID[:]) < 0
+	})
+
+	edges := make([]*circulationEdge, 0, len(pairs)*2)
+	for _, pair := range pairs {
+		pairItems := byPair[pair]
+		countCapacity := big.NewInt(int64(len(pairItems)))
+		edges = append(edges, &circulationEdge{
+			from: shardIndex[pair.From], to: shardIndex[pair.To],
+			capacity: countCapacity, flow: new(big.Int), cost: 1, pair: pair, order: *order,
+		})
+		(*order)++
+
+		residualCapacity := new(big.Int)
+		for _, item := range pairItems {
+			extra := new(big.Int).Sub(item.payment.Amount, big.NewInt(1))
+			if extra.Sign() > 0 {
+				residualCapacity.Add(residualCapacity, extra)
+			}
+		}
+		if residualCapacity.Sign() > 0 {
+			edges = append(edges, &circulationEdge{
+				from: shardIndex[pair.From], to: shardIndex[pair.To],
+				capacity: residualCapacity, flow: new(big.Int), cost: 0, pair: pair, order: *order,
+			})
+			(*order)++
+		}
+	}
+
+	return edges, nil
+}
+
+func maximizeCirculation(edges []*circulationEdge) error {
+	nodeCount := 0
+	for _, edge := range edges {
+		nodeCount = max(nodeCount, edge.from+1, edge.to+1)
+	}
+	for {
+		cycle := findPositiveCycle(nodeCount, edges)
+		if len(cycle) == 0 {
+			return nil
+		}
+		amount := residualCapacity(cycle[0])
+		for _, arc := range cycle[1:] {
+			amount = minBig(amount, residualCapacity(arc))
+		}
+		if amount.Sign() <= 0 {
+			return ErrMatchingInvariant
+		}
+		for _, arc := range cycle {
+			if arc.reverse {
+				arc.edge.flow.Sub(arc.edge.flow, amount)
+			} else {
+				arc.edge.flow.Add(arc.edge.flow, amount)
+			}
+		}
+	}
+}
+
+func findPositiveCycle(nodeCount int, edges []*circulationEdge) []residualArc {
+	if nodeCount == 0 {
+		return nil
+	}
+	arcs := residualArcs(edges)
+	dist := make([]int, nodeCount)
+	predecessor := make([]int, nodeCount)
+	for idx := range predecessor {
+		predecessor[idx] = -1
+	}
+
+	updated := -1
+	for range nodeCount {
+		updated = -1
+		for idx, arc := range arcs {
+			if dist[arc.to] < dist[arc.from]+arc.cost {
+				dist[arc.to] = dist[arc.from] + arc.cost
+				predecessor[arc.to] = idx
+				updated = arc.to
+			}
+		}
+	}
+	if updated == -1 {
+		return nil
+	}
+
+	cycleNode := updated
+	for range nodeCount {
+		arcIdx := predecessor[cycleNode]
+		if arcIdx < 0 {
+			return nil
+		}
+		cycleNode = arcs[arcIdx].from
+	}
+
+	cycle := make([]residualArc, 0)
+	seen := make(map[int]int)
+	node := cycleNode
+	for {
+		if idx, exists := seen[node]; exists {
+			cycle = cycle[idx:]
+			break
+		}
+		seen[node] = len(cycle)
+		arcIdx := predecessor[node]
+		if arcIdx < 0 {
+			return nil
+		}
+		arc := arcs[arcIdx]
+		cycle = append(cycle, arc)
+		node = arc.from
+	}
+
+	totalCost := 0
+	for _, arc := range cycle {
+		totalCost += arc.cost
+	}
+	if totalCost <= 0 {
+		return nil
+	}
+
+	return cycle
+}
+
+func residualArcs(edges []*circulationEdge) []residualArc {
+	arcs := make([]residualArc, 0, len(edges)*2)
+	for _, edge := range edges {
+		if remaining := new(big.Int).Sub(edge.capacity, edge.flow); remaining.Sign() > 0 {
+			arcs = append(arcs, residualArc{
+				edge: edge, from: edge.from, to: edge.to, cost: edge.cost, order: edge.order * 2,
+			})
+		}
+		if edge.flow.Sign() > 0 {
+			arcs = append(arcs, residualArc{
+				edge: edge, from: edge.to, to: edge.from, cost: -edge.cost, reverse: true, order: edge.order*2 + 1,
+			})
+		}
+	}
+	sort.Slice(arcs, func(i, j int) bool {
+		if arcs[i].from != arcs[j].from {
+			return arcs[i].from < arcs[j].from
+		}
+		if arcs[i].to != arcs[j].to {
+			return arcs[i].to < arcs[j].to
+		}
+		if arcs[i].cost != arcs[j].cost {
+			return arcs[i].cost > arcs[j].cost
+		}
+		return arcs[i].order < arcs[j].order
+	})
+
+	return arcs
+}
+
+func residualCapacity(arc residualArc) *big.Int {
+	if arc.reverse {
+		return new(big.Int).Set(arc.edge.flow)
+	}
+
+	return new(big.Int).Sub(arc.edge.capacity, arc.edge.flow)
+}
+
+func assignPairFlow(items []*workItem, rewardedFlow, totalFlow *big.Int) error {
+	if totalFlow.Sign() == 0 {
+		return nil
+	}
+	count, err := bigToInt(rewardedFlow)
+	if err != nil {
+		return err
+	}
+	if count <= 0 || count > len(items) {
+		return ErrMatchingInvariant
+	}
+
+	selected := selectItemsForFlow(items, count, totalFlow)
+	remaining := new(big.Int).Set(totalFlow)
+	for _, item := range selected {
+		item.matched.SetInt64(1)
+		item.remaining.Sub(item.remaining, big.NewInt(1))
+		remaining.Sub(remaining, big.NewInt(1))
+	}
+	for _, item := range selected {
+		if remaining.Sign() == 0 {
+			break
+		}
+		extraCapacity := new(big.Int).Sub(item.payment.Amount, item.matched)
+		extra := minBig(extraCapacity, remaining)
+		item.matched.Add(item.matched, extra)
+		item.remaining.Sub(item.remaining, extra)
+		remaining.Sub(remaining, extra)
+	}
+	if remaining.Sign() != 0 {
+		return ErrMatchingInvariant
+	}
+
+	return nil
+}
+
+func selectItemsForFlow(items []*workItem, count int, totalFlow *big.Int) []*workItem {
+	candidates := append([]*workItem(nil), items...)
+	if totalFlow.Cmp(big.NewInt(int64(count))) == 0 {
+		sortItemsByAmountThenID(candidates)
+
+		return candidates[:count]
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		cmp := candidates[i].payment.Amount.Cmp(candidates[j].payment.Amount)
+		if cmp != 0 {
+			return cmp > 0
+		}
+		return compareID(candidates[i].id, candidates[j].id) < 0
+	})
+	selected := append([]*workItem(nil), candidates[:count]...)
+	sort.Slice(selected, func(i, j int) bool {
+		cmp := selected[i].payment.Amount.Cmp(selected[j].payment.Amount)
+		if cmp != 0 {
+			return cmp > 0
+		}
+		return compareID(selected[i].id, selected[j].id) < 0
+	})
+
+	return selected
+}
+
+func bigToInt(value *big.Int) (int, error) {
+	if !value.IsInt64() {
+		return 0, ErrMatchingInvariant
+	}
+	converted := value.Int64()
+	if converted < 0 || int64(int(converted)) != converted {
+		return 0, ErrMatchingInvariant
+	}
+
+	return int(converted), nil
+}
+
+func allocationForMatchedItem(item *workItem) Allocation {
+	lower, higher := item.payment.SourceShard, item.payment.DestinationShard
+	lowerID, higherID := item.id, item.id
+	if lower > higher {
+		lower, higher = higher, lower
+	}
+
+	return Allocation{
+		Group:                 GroupKey{LowerShard: lower, HigherShard: higher, AssetID: item.payment.AssetID},
+		LowerToHigherIntentID: lowerID, HigherToLowerIntentID: higherID,
+		Amount: new(big.Int).Set(item.matched), Phase: SplitPhase,
+	}
+}
+
+func allocationPrimaryID(allocation Allocation) intent.ID {
+	if compareID(allocation.LowerToHigherIntentID, allocation.HigherToLowerIntentID) <= 0 {
+		return allocation.LowerToHigherIntentID
+	}
+
+	return allocation.HigherToLowerIntentID
+}
+
 func matchCountGreedySplit(group *matchGroup) ([]Allocation, error) {
 	lower := positiveRemaining(group.lowerToHigher)
 	higher := positiveRemaining(group.higherToLower)
@@ -458,6 +862,46 @@ func validateGroup(group *matchGroup) error {
 		total := new(big.Int).Add(item.remaining, item.matched)
 		if total.Cmp(item.payment.Amount) != 0 {
 			return fmt.Errorf("%w: intent %x does not conserve amount", ErrMatchingInvariant, item.id)
+		}
+	}
+
+	return nil
+}
+
+type shardAssetKey struct {
+	ShardID int64
+	AssetID intent.AssetID
+}
+
+type shardAssetBalance struct {
+	outgoing *big.Int
+	incoming *big.Int
+}
+
+func validateMultilateral(items []*workItem) error {
+	balances := make(map[shardAssetKey]*shardAssetBalance)
+	for _, item := range items {
+		if item.remaining.Sign() < 0 || item.matched.Sign() < 0 {
+			return fmt.Errorf("%w: negative amount", ErrMatchingInvariant)
+		}
+		total := new(big.Int).Add(item.remaining, item.matched)
+		if total.Cmp(item.payment.Amount) != 0 {
+			return fmt.Errorf("%w: intent %x does not conserve amount", ErrMatchingInvariant, item.id)
+		}
+		sourceKey := shardAssetKey{ShardID: item.payment.SourceShard, AssetID: item.payment.AssetID}
+		destinationKey := shardAssetKey{ShardID: item.payment.DestinationShard, AssetID: item.payment.AssetID}
+		if balances[sourceKey] == nil {
+			balances[sourceKey] = &shardAssetBalance{outgoing: new(big.Int), incoming: new(big.Int)}
+		}
+		if balances[destinationKey] == nil {
+			balances[destinationKey] = &shardAssetBalance{outgoing: new(big.Int), incoming: new(big.Int)}
+		}
+		balances[sourceKey].outgoing.Add(balances[sourceKey].outgoing, item.matched)
+		balances[destinationKey].incoming.Add(balances[destinationKey].incoming, item.matched)
+	}
+	for key, balance := range balances {
+		if balance.outgoing.Cmp(balance.incoming) != 0 {
+			return fmt.Errorf("%w: shard %d", ErrMatchingInvariant, key.ShardID)
 		}
 	}
 

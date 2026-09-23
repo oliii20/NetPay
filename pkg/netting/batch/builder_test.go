@@ -47,7 +47,7 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 		settlements[settlement.ShardID] = settlement
 	}
 	require.Len(t, settlements[1].FallbackIncoming, 1)
-	require.Equal(t, int64(3), settlements[1].FallbackIncoming[0].FallbackAmount.Int64())
+	require.Equal(t, int64(9), settlements[1].FallbackIncoming[0].FallbackAmount.Int64())
 	require.Equal(t, proposal.Header.BatchID, metric.BatchID)
 	require.Equal(t, uint64(3), metric.WindowID)
 	require.Equal(t, 2, metric.IntentCount)
@@ -56,11 +56,11 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	require.Equal(t, 0, metric.BestFitMatchedIntentCount)
 	require.Equal(t, 2, metric.SplitMatchedIntentCount)
 	require.Equal(t, 2, metric.MatchedIntentCount)
-	require.Equal(t, 1, metric.FullMatchedIntentCount)
-	require.Equal(t, 1, metric.FallbackIntentCount)
+	require.Equal(t, 0, metric.FullMatchedIntentCount)
+	require.Equal(t, 2, metric.FallbackIntentCount)
 	require.Equal(t, "17", metric.OriginalValue)
-	require.Equal(t, "14", metric.MatchedValue)
-	require.Equal(t, "3", metric.FallbackValue)
+	require.Equal(t, "2", metric.MatchedValue)
+	require.Equal(t, "15", metric.FallbackValue)
 	require.Positive(t, metric.MatchTime)
 	require.Positive(t, metric.MerkleBuildTime)
 
@@ -68,10 +68,10 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	for _, result := range proposal.Sidecar.IntentResults {
 		bySource[result.Intent.SourceShard] = result
 	}
-	require.Equal(t, int64(7), bySource[0].MatchedAmount.Int64())
-	require.Equal(t, int64(3), bySource[0].FallbackAmount.Int64())
-	require.Equal(t, int64(7), bySource[1].MatchedAmount.Int64())
-	require.Zero(t, bySource[1].FallbackAmount.Sign())
+	require.Equal(t, int64(1), bySource[0].MatchedAmount.Int64())
+	require.Equal(t, int64(9), bySource[0].FallbackAmount.Int64())
+	require.Equal(t, int64(1), bySource[1].MatchedAmount.Int64())
+	require.Equal(t, int64(6), bySource[1].FallbackAmount.Int64())
 
 	rebuilt, err := (batch.Builder{}).Build(frozen, previous)
 	require.NoError(t, err)
@@ -121,9 +121,9 @@ func TestBuilderSplitsSettlementChunks(t *testing.T) {
 	proposal, err := (batch.Builder{SettlementChunkSize: 2}).Build(frozen, merkle.Hash{})
 	require.NoError(t, err)
 	require.Equal(t, uint32(2), proposal.Header.SettlementChunkSize)
-	require.Len(t, proposal.Sidecar.ShardSettlements, 8)
+	require.Len(t, proposal.Sidecar.ShardSettlements, 12)
 	for _, settlement := range proposal.Sidecar.ShardSettlements {
-		require.Equal(t, uint32(4), settlement.ChunkCount)
+		require.Equal(t, uint32(6), settlement.ChunkCount)
 		require.LessOrEqual(
 			t,
 			len(settlement.Outgoing)+len(settlement.Incoming)+len(settlement.FallbackIncoming),
@@ -132,7 +132,7 @@ func TestBuilderSplitsSettlementChunks(t *testing.T) {
 	}
 	packages, err := batch.BuildSettlementPackages(proposal)
 	require.NoError(t, err)
-	require.Len(t, packages, 8)
+	require.Len(t, packages, 12)
 	for _, pack := range packages {
 		require.Equal(t, proposal.Header.BatchID, pack.Header.BatchID)
 		require.Empty(t, pack.Header.Cuts)

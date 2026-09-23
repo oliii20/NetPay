@@ -106,7 +106,7 @@ func TestNettingPipelineAcrossFourShards(t *testing.T) {
 			fallbackTotal.Add(&fallbackTotal, result.FallbackAmount)
 		}
 	}
-	require.Equal(t, big.NewInt(7), &fallbackTotal)
+	require.Equal(t, big.NewInt(25), &fallbackTotal)
 	for _, chain := range chains {
 		pending, pendingErr := chain.GetPendingFallbacks(ctx)
 		require.NoError(t, pendingErr)

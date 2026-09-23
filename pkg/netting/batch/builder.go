@@ -440,8 +440,7 @@ type settlementDraft struct {
 }
 
 type settlementGroupKey struct {
-	Counterparty int64
-	AssetID      intent.AssetID
+	AssetID intent.AssetID
 }
 
 type matchedSettlementGroup struct {
@@ -464,7 +463,7 @@ func splitSettlement(settlement model.ShardSettlement, chunkSize int) ([]model.S
 			fallbackOutgoing = append(fallbackOutgoing, cloneResult(result))
 			continue
 		}
-		key := settlementGroupKey{Counterparty: result.Intent.DestinationShard, AssetID: result.Intent.AssetID}
+		key := settlementGroupKey{AssetID: result.Intent.AssetID}
 		group := matchedGroups[key]
 		if group == nil {
 			group = &matchedSettlementGroup{}
@@ -473,7 +472,7 @@ func splitSettlement(settlement model.ShardSettlement, chunkSize int) ([]model.S
 		group.Outgoing = append(group.Outgoing, cloneResult(result))
 	}
 	for _, result := range settlement.Incoming {
-		key := settlementGroupKey{Counterparty: result.Intent.SourceShard, AssetID: result.Intent.AssetID}
+		key := settlementGroupKey{AssetID: result.Intent.AssetID}
 		group := matchedGroups[key]
 		if group == nil {
 			group = &matchedSettlementGroup{}
@@ -488,10 +487,6 @@ func splitSettlement(settlement model.ShardSettlement, chunkSize int) ([]model.S
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Counterparty != keys[j].Counterparty {
-			return keys[i].Counterparty < keys[j].Counterparty
-		}
-
 		return bytes.Compare(keys[i].AssetID[:], keys[j].AssetID[:]) < 0
 	})
 	for _, key := range keys {

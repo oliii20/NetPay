@@ -14,7 +14,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/matcher"
 )
 
-func TestMatchRunsExactBeforeBestFit(t *testing.T) {
+func TestMatchFullModeMaximizesPositiveIntentCount(t *testing.T) {
 	t.Parallel()
 
 	payments := []intent.PaymentIntent{
@@ -26,16 +26,15 @@ func TestMatchRunsExactBeforeBestFit(t *testing.T) {
 
 	output, err := matcher.Match(payments)
 	require.NoError(t, err)
-	require.Len(t, output.Allocations, 2)
-	require.Equal(t, matcher.ExactPhase, output.Allocations[0].Phase)
-	require.Equal(t, int64(5), output.Allocations[0].Amount.Int64())
-	require.Equal(t, matcher.SplitPhase, output.Allocations[1].Phase)
-	require.Equal(t, int64(6), output.Allocations[1].Amount.Int64())
+	require.Len(t, output.Allocations, 4)
+	require.Equal(t, []matcher.Phase{
+		matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase,
+	}, allocationPhases(output))
 	requireResultAmounts(t, output, map[byte][2]int64{
-		1: {5, 0},
-		2: {6, 0},
-		3: {5, 0},
-		4: {6, 1},
+		1: {1, 4},
+		2: {1, 5},
+		3: {1, 4},
+		4: {1, 6},
 	})
 }
 
@@ -71,12 +70,14 @@ func TestMatchModesSupportAblation(t *testing.T) {
 
 	full, err := matcher.MatchWithMode(payments, matcher.FullMode)
 	require.NoError(t, err)
-	require.Equal(t, []matcher.Phase{matcher.ExactPhase, matcher.SplitPhase}, allocationPhases(full))
+	require.Equal(t, []matcher.Phase{
+		matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase,
+	}, allocationPhases(full))
 	requireResultAmounts(t, full, map[byte][2]int64{
-		1: {5, 0},
-		2: {7, 0},
-		3: {5, 0},
-		4: {7, 1},
+		1: {1, 4},
+		2: {1, 6},
+		3: {1, 4},
+		4: {1, 7},
 	})
 
 	split, err := matcher.MatchWithMode([]intent.PaymentIntent{
@@ -85,7 +86,14 @@ func TestMatchModesSupportAblation(t *testing.T) {
 		matcherTestIntent(8, 1, 0, 3),
 	}, matcher.FullMode)
 	require.NoError(t, err)
-	require.Equal(t, []matcher.Phase{matcher.SplitPhase, matcher.SplitPhase}, allocationPhases(split))
+	require.Equal(t, []matcher.Phase{
+		matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase,
+	}, allocationPhases(split))
+	requireResultAmounts(t, split, map[byte][2]int64{
+		6: {2, 5},
+		7: {1, 3},
+		8: {1, 2},
+	})
 }
 
 func TestMatchBestFitChoosesSmallestSufficientCounterIntent(t *testing.T) {
@@ -103,7 +111,7 @@ func TestMatchBestFitChoosesSmallestSufficientCounterIntent(t *testing.T) {
 	require.Equal(t, byte(4), resultSender(t, output, output.Allocations[1].HigherToLowerIntentID))
 }
 
-func TestMatchFullModeMaximizesFullyMatchedIntentCount(t *testing.T) {
+func TestMatchFullModePrefersMorePositiveIntentsOverLargeAmount(t *testing.T) {
 	t.Parallel()
 
 	output, err := matcher.Match([]intent.PaymentIntent{
@@ -127,6 +135,32 @@ func TestMatchFullModeMaximizesFullyMatchedIntentCount(t *testing.T) {
 	})
 }
 
+func TestMatchFullModeSupportsMultilateralCycles(t *testing.T) {
+	t.Parallel()
+
+	output, err := matcher.Match([]intent.PaymentIntent{
+		matcherTestIntent(1, 0, 1, 1),
+		matcherTestIntent(2, 0, 1, 1),
+		matcherTestIntent(3, 0, 1, 1),
+		matcherTestIntent(4, 0, 1, 1),
+		matcherTestIntent(5, 0, 1, 1),
+		matcherTestIntent(6, 0, 1, 100),
+		matcherTestIntent(7, 1, 2, 5),
+		matcherTestIntent(8, 2, 0, 5),
+	})
+	require.NoError(t, err)
+	requireResultAmounts(t, output, map[byte][2]int64{
+		1: {1, 0},
+		2: {1, 0},
+		3: {1, 0},
+		4: {1, 0},
+		5: {1, 0},
+		6: {0, 100},
+		7: {5, 0},
+		8: {5, 0},
+	})
+}
+
 func TestMatchSplitConsumesSmallestAmountThenSmallestIDOnTie(t *testing.T) {
 	t.Parallel()
 
@@ -142,20 +176,27 @@ func TestMatchSplitConsumesSmallestAmountThenSmallestIDOnTie(t *testing.T) {
 
 	output, err := matcher.Match([]intent.PaymentIntent{left, rightB, rightC, rightA})
 	require.NoError(t, err)
-	require.Len(t, output.Allocations, 3)
-	require.Equal(t, []matcher.Phase{matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase}, allocationPhases(output))
-	require.Equal(t, []int64{4, 5, 4}, allocationAmounts(output))
-	require.Equal(t, firstTieID, output.Allocations[1].HigherToLowerIntentID)
+	require.Len(t, output.Allocations, 4)
+	require.Equal(t, []matcher.Phase{
+		matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase,
+	}, allocationPhases(output))
+	require.Contains(t, allocationAmounts(output), int64(3))
+	require.Contains(t, []intent.ID{
+		output.Allocations[0].HigherToLowerIntentID,
+		output.Allocations[1].HigherToLowerIntentID,
+		output.Allocations[2].HigherToLowerIntentID,
+		output.Allocations[3].HigherToLowerIntentID,
+	}, firstTieID)
 	firstTieTag := resultSender(t, output, firstTieID)
 	secondTieTag := byte(2)
 	if firstTieTag == 2 {
 		secondTieTag = 3
 	}
 	expected := map[byte][2]int64{
-		1:            {13, 0},
-		4:            {4, 0},
-		firstTieTag:  {5, 0},
-		secondTieTag: {4, 1},
+		1:            {3, 10},
+		4:            {1, 3},
+		firstTieTag:  {1, 4},
+		secondTieTag: {1, 4},
 	}
 	requireResultAmounts(t, output, expected)
 }
@@ -171,7 +212,12 @@ func TestMatchUsesSmallestIntentFirstWhenTotalsTie(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, output.Allocations)
-	require.Equal(t, byte(2), resultSender(t, output, output.Allocations[0].LowerToHigherIntentID))
+	requireResultAmounts(t, output, map[byte][2]int64{
+		1: {1, 5},
+		2: {1, 3},
+		3: {1, 6},
+		4: {1, 2},
+	})
 }
 
 func TestMatchIsDeterministicAcrossInputOrderAndGroups(t *testing.T) {
@@ -194,10 +240,10 @@ func TestMatchIsDeterministicAcrossInputOrderAndGroups(t *testing.T) {
 	require.Equal(t, forwardOutput, reverseOutput)
 
 	requireResultAmounts(t, forwardOutput, map[byte][2]int64{
-		1: {4, 5},
-		2: {4, 0},
-		3: {6, 0},
-		4: {6, 2},
+		1: {1, 8},
+		2: {1, 3},
+		3: {1, 5},
+		4: {1, 7},
 		5: {0, 7},
 	})
 }
@@ -277,18 +323,80 @@ func TestMatchRandomizedConservationOptimalityAndDeterminism(t *testing.T) {
 		require.Equal(t, forward, reordered, "iteration %d", iteration)
 
 		var lowerMatched, higherMatched int64
+		var matchedCount int
 		for _, result := range forward.Results {
 			require.NoError(t, result.Validate(), "iteration %d", iteration)
+			if result.MatchedAmount.Sign() > 0 {
+				matchedCount++
+			}
 			if result.Intent.SourceShard == 0 {
 				lowerMatched += result.MatchedAmount.Int64()
 			} else {
 				higherMatched += result.MatchedAmount.Int64()
 			}
 		}
-		wantMatched := min(lowerTotal, higherTotal)
-		require.Equal(t, wantMatched, lowerMatched, "iteration %d", iteration)
-		require.Equal(t, wantMatched, higherMatched, "iteration %d", iteration)
+		require.Equal(t, lowerMatched, higherMatched, "iteration %d", iteration)
+		require.Equal(
+			t,
+			maxBilateralPositiveCount(payments),
+			matchedCount,
+			"iteration %d lower_total=%d higher_total=%d",
+			iteration,
+			lowerTotal,
+			higherTotal,
+		)
 	}
+}
+
+func maxBilateralPositiveCount(payments []intent.PaymentIntent) int {
+	lowerAmounts := make([]int64, 0)
+	higherAmounts := make([]int64, 0)
+	for _, payment := range payments {
+		if payment.SourceShard == 0 {
+			lowerAmounts = append(lowerAmounts, payment.Amount.Int64())
+		} else {
+			higherAmounts = append(higherAmounts, payment.Amount.Int64())
+		}
+	}
+	sortDesc := func(amounts []int64) {
+		slices.SortFunc(amounts, func(left, right int64) int {
+			switch {
+			case left > right:
+				return -1
+			case left < right:
+				return 1
+			default:
+				return 0
+			}
+		})
+	}
+	sortDesc(lowerAmounts)
+	sortDesc(higherAmounts)
+	lowerCaps := prefixSums(lowerAmounts)
+	higherCaps := prefixSums(higherAmounts)
+	best := 0
+	for lowerCount := range len(lowerAmounts) + 1 {
+		for higherCount := range len(higherAmounts) + 1 {
+			if lowerCount == 0 || higherCount == 0 {
+				continue
+			}
+			minimumFlow := int64(max(lowerCount, higherCount))
+			if lowerCaps[lowerCount] >= minimumFlow && higherCaps[higherCount] >= minimumFlow {
+				best = max(best, lowerCount+higherCount)
+			}
+		}
+	}
+
+	return best
+}
+
+func prefixSums(amounts []int64) []int64 {
+	prefix := make([]int64, len(amounts)+1)
+	for idx, amount := range amounts {
+		prefix[idx+1] = prefix[idx] + amount
+	}
+
+	return prefix
 }
 
 func matcherTestIntent(tag byte, source, destination int64, amount int64) intent.PaymentIntent {

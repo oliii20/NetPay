@@ -24,7 +24,7 @@ var (
 	ErrDuplicateBatchIntent = errors.New("duplicate or previously consumed batch intent")
 	ErrExpiredBatchIntent   = errors.New("batch contains expired intent")
 	ErrResultCoverage       = errors.New("intent results do not cover batch intents")
-	ErrMatchedConservation  = errors.New("matched amount does not conserve by shard pair and asset")
+	ErrMatchedConservation  = errors.New("matched amount does not conserve by shard and asset")
 	ErrSettlementCoverage   = errors.New("settlements do not cover intent results")
 	ErrInvalidCommitment    = errors.New("invalid Beacon batch commitment")
 	ErrDerivedBatchMismatch = errors.New("batch differs from deterministic derivation")
@@ -213,45 +213,37 @@ func validateResultCoverage(intents []intent.PaymentIntent, results []model.Inte
 	return nil
 }
 
-type shardPairAsset struct {
-	lower   int64
-	higher  int64
+type shardAsset struct {
+	shardID int64
 	assetID intent.AssetID
 }
 
 type directionalMatched struct {
-	lowerToHigher *big.Int
-	higherToLower *big.Int
+	outgoing *big.Int
+	incoming *big.Int
 }
 
 func validateMatchedConservation(results []model.IntentResult) error {
-	groups := make(map[shardPairAsset]*directionalMatched)
+	groups := make(map[shardAsset]*directionalMatched)
 	for _, result := range results {
 		source, destination := result.Intent.SourceShard, result.Intent.DestinationShard
 		if source < 0 || destination < 0 || source == destination {
 			return fmt.Errorf("%w: invalid shard pair %d -> %d", ErrMatchedConservation, source, destination)
 		}
-		lower, higher := source, destination
-		lowerToHigher := true
-		if lower > higher {
-			lower, higher = higher, lower
-			lowerToHigher = false
+		sourceKey := shardAsset{shardID: source, assetID: result.Intent.AssetID}
+		destinationKey := shardAsset{shardID: destination, assetID: result.Intent.AssetID}
+		if groups[sourceKey] == nil {
+			groups[sourceKey] = &directionalMatched{outgoing: new(big.Int), incoming: new(big.Int)}
 		}
-		key := shardPairAsset{lower: lower, higher: higher, assetID: result.Intent.AssetID}
-		group := groups[key]
-		if group == nil {
-			group = &directionalMatched{lowerToHigher: new(big.Int), higherToLower: new(big.Int)}
-			groups[key] = group
+		if groups[destinationKey] == nil {
+			groups[destinationKey] = &directionalMatched{outgoing: new(big.Int), incoming: new(big.Int)}
 		}
-		if lowerToHigher {
-			group.lowerToHigher.Add(group.lowerToHigher, result.MatchedAmount)
-		} else {
-			group.higherToLower.Add(group.higherToLower, result.MatchedAmount)
-		}
+		groups[sourceKey].outgoing.Add(groups[sourceKey].outgoing, result.MatchedAmount)
+		groups[destinationKey].incoming.Add(groups[destinationKey].incoming, result.MatchedAmount)
 	}
 	for key, group := range groups {
-		if group.lowerToHigher.Cmp(group.higherToLower) != 0 {
-			return fmt.Errorf("%w: shards %d-%d", ErrMatchedConservation, key.lower, key.higher)
+		if group.outgoing.Cmp(group.incoming) != 0 {
+			return fmt.Errorf("%w: shard %d", ErrMatchedConservation, key.shardID)
 		}
 	}
 

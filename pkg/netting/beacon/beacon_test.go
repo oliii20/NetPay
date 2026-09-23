@@ -69,7 +69,7 @@ func TestValidatorRejectsTamperingCoverageAndExpiry(t *testing.T) {
 	valid := proposal(t, 1, merkle.Hash{}, 0, beaconHash(0x11), beaconHash(0x21), 1)
 
 	tampered := valid.Clone()
-	tampered.Sidecar.IntentResults[0].MatchedAmount.SetInt64(1)
+	tampered.Sidecar.IntentResults[0].MatchedAmount.SetInt64(0)
 	tampered.Sidecar.IntentResults[0].FallbackAmount.Sub(
 		tampered.Sidecar.IntentResults[0].Intent.Amount,
 		tampered.Sidecar.IntentResults[0].MatchedAmount,

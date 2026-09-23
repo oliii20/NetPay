@@ -37,8 +37,7 @@ var (
 )
 
 type balanceKey struct {
-	Counterparty int64
-	AssetID      intent.AssetID
+	AssetID intent.AssetID
 }
 
 var settlementInitialBalance, _ = uint256.FromDecimal(account.NormalInitBalanceStr)
@@ -207,9 +206,7 @@ func validateInstructions(registryState *registry.Registry, shardID int64, settl
 				return registry.ErrInvalidStatus
 			}
 		}
-		addAmount(outgoing, balanceKey{
-			Counterparty: result.Intent.DestinationShard, AssetID: result.Intent.AssetID,
-		}, result.MatchedAmount)
+		addAmount(outgoing, balanceKey{AssetID: result.Intent.AssetID}, result.MatchedAmount)
 	}
 	for _, result := range settlement.Incoming {
 		if err := result.Validate(); err != nil {
@@ -222,9 +219,7 @@ func validateInstructions(registryState *registry.Registry, shardID int64, settl
 			return ErrDuplicateIntent
 		}
 		seen[result.IntentID] = struct{}{}
-		addAmount(incoming, balanceKey{
-			Counterparty: result.Intent.SourceShard, AssetID: result.Intent.AssetID,
-		}, result.MatchedAmount)
+		addAmount(incoming, balanceKey{AssetID: result.Intent.AssetID}, result.MatchedAmount)
 	}
 	for _, result := range settlement.FallbackIncoming {
 		if err := result.Validate(); err != nil {
@@ -254,7 +249,7 @@ func validateInstructions(registryState *registry.Registry, shardID int64, settl
 func formatBalances(amounts map[balanceKey]*big.Int) string {
 	result := ""
 	for key, amount := range amounts {
-		result += fmt.Sprintf("[%d:%x=%s]", key.Counterparty, key.AssetID, amount)
+		result += fmt.Sprintf("[%x=%s]", key.AssetID, amount)
 	}
 
 	return result
