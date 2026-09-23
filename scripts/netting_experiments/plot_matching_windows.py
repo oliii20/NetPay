@@ -40,7 +40,7 @@ def main() -> int:
     parser.add_argument(
         "--run-dir",
         type=Path,
-        help="experiment run directory, e.g. .exp/netting-paper/runs/<run_id>",
+        help="experiment run directory, e.g. exp/netting-paper/runs/<run_id>",
     )
     parser.add_argument(
         "--batch-metrics",

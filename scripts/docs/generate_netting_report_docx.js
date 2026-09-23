@@ -95,9 +95,9 @@ const experimentRows = [
 ];
 
 const validationRows = [
-  ["Go build", "GOCACHE=$PWD/.exp/gocache go build ./...", "通过。沙箱内默认 Go cache 不可写，使用仓库内 GOCACHE。"],
-  ["Go tests", "GOCACHE=$PWD/.exp/gocache go test -gcflags=all='-N -l' ./...", "通过，覆盖 chain、PBFT、netting、supervisor、network 等包。"],
-  ["Python syntax", "PYTHONPYCACHEPREFIX=$PWD/.exp/pycache python3 -m py_compile scripts/netting_experiments/*.py", "通过。"],
+  ["Go build", "GOCACHE=$PWD/exp/gocache go build ./...", "通过。沙箱内默认 Go cache 不可写，使用仓库内 GOCACHE。"],
+  ["Go tests", "GOCACHE=$PWD/exp/gocache go test -gcflags=all='-N -l' ./...", "通过，覆盖 chain、PBFT、netting、supervisor、network 等包。"],
+  ["Python syntax", "PYTHONPYCACHEPREFIX=$PWD/exp/pycache python3 -m py_compile scripts/netting_experiments/*.py", "通过。"],
   ["Experiment smoke", "scripts/netting_experiments/run_experiments.py --profile smoke", "第 5 组消融 smoke 已实际跑通；完整 1–7 组真实多进程 smoke 曾因 Codex 使用额度/外部进程限制中断，脚本已可由本地终端继续运行。"],
   ["Partial plotting", "python3 scripts/netting_experiments/plot_experiments.py", "按 summary.csv 中已有实验组生成对应 PNG；所有图都包含 matched_intent_ratio 撮合率指标。"],
 ];

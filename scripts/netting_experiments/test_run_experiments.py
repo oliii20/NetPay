@@ -32,6 +32,7 @@ class RunExperimentSummaryTest(unittest.TestCase):
             batch_size_override=6000,
             settlement_chunk_size_override=500,
             max_window_ms_override=2500,
+            network_latency_ms_override=75,
         )
 
         self.assertEqual(3, len(specs))
@@ -40,8 +41,20 @@ class RunExperimentSummaryTest(unittest.TestCase):
             self.assertEqual(4, spec.node_num)
             self.assertEqual(6000, spec.batch_size)
             self.assertEqual(2500, spec.max_window_ms)
+            self.assertEqual(75, spec.network_latency_ms)
             self.assertEqual(300000, spec.tx_number)
             self.assertEqual(3000, spec.tx_speed)
+
+    def test_write_config_includes_network_latency_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            config_path = run_dir / "config.yaml"
+            workload_path = run_dir / "workload.csv"
+            spec = runner.RunSpec("exp1_baseline", "method", "static_relay", network_latency_ms=125)
+
+            runner.write_config(config_path, run_dir, workload_path, spec)
+
+            self.assertIn("  latency: 125\n", config_path.read_text(encoding="utf-8"))
 
     def test_exp1_runs_netting_before_baselines(self) -> None:
         specs = runner.build_specs("full", {"exp1"}, [1])

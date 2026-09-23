@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO / "scripts/netting_experiments"))
 
 from plot_experiments import PNGFigure  # noqa: E402
 
-SUMMARY = REPO / ".exp/netting-paper/repeated-exp1/sessions/shard8_tx600k-02/summary.csv"
+SUMMARY = REPO / "exp/netting-paper/repeated-exp1/sessions/shard8_tx600k-02/summary.csv"
 OUT_DIR = REPO / "figures/netting"
 
 METHODS = [

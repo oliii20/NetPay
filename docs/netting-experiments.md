@@ -63,12 +63,15 @@ non-Windows executable named `*.exe`.
 
 Use `--tx-number` and `--tx-speed` to override the workload size and injection
 rate chosen by `--profile`. Use `--block-limit` to override `system.limit`.
+Use `--network-latency-ms` to enable direct-RPC simulated network latency for
+any selected group, including exp1; the default is `0` for no injected latency.
 Netting windows now close only by `MaxWindowDuration`; the default is `2000ms`,
 which is four default block intervals. Override it from the command line with
 `--max-window-ms`, for example:
 
 ```bash
 GOCACHE="$PWD/.exp/gocache" python3 scripts/netting_experiments/run_experiments.py --profile pilot --experiments exp1 --max-window-ms 3000
+GOCACHE="$PWD/.exp/gocache" python3 scripts/netting_experiments/run_experiments.py --profile pilot --experiments exp1 --network-latency-ms 50
 ```
 
 The plotting script reads the experiment groups present in

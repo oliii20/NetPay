@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_experiments as runner
 
 
-DEFAULT_OUT_ROOT = Path(".exp/netting-paper/repeated-exp1")
+DEFAULT_OUT_ROOT = Path("exp/netting-paper/repeated-exp1")
 DEFAULT_FIG_DIR = Path("figures/netting")
 DEFAULT_REPEATS = 20
 DEFAULT_TX_NUMBER = 300000
@@ -52,6 +52,12 @@ def main() -> int:
     parser.add_argument("--settlement-chunk-size", type=positive_int, default=DEFAULT_SETTLEMENT_CHUNK_SIZE)
     parser.add_argument("--batch-size", type=non_negative_int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--max-window-ms", type=positive_int, default=DEFAULT_MAX_WINDOW_MS)
+    parser.add_argument(
+        "--network-latency-ms",
+        type=non_negative_int,
+        default=0,
+        help="direct-RPC simulated network latency in ms for exp1 runs",
+    )
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument(
@@ -71,7 +77,7 @@ def main() -> int:
 
     repo = runner.REPO_ROOT
     if "GOCACHE" not in os.environ:
-        os.environ["GOCACHE"] = str(repo / ".exp" / "gocache")
+        os.environ["GOCACHE"] = str(repo / "exp" / "gocache")
 
     if args.summary:
         summary_path = runner.repo_path(args.summary, repo)
@@ -102,6 +108,7 @@ def main() -> int:
         None,
         args.settlement_chunk_size,
         args.max_window_ms,
+        args.network_latency_ms,
     )
     runner.validate_specs(specs)
     specs = order_netting_first(specs)
@@ -139,6 +146,7 @@ def main() -> int:
         "batch_size": args.batch_size,
         "settlement_chunk_size": args.settlement_chunk_size,
         "max_window_ms": args.max_window_ms,
+        "network_latency_ms": args.network_latency_ms,
         "gocache": os.environ.get("GOCACHE", ""),
     }
     metadata["argv"] = sys.argv[1:]

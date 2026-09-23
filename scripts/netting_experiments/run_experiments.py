@@ -29,7 +29,7 @@ from typing import Iterable, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASET = Path("data/25250000to25499999_BlockTransaction.csv")
-DEFAULT_OUT_ROOT = Path(".exp/netting-paper")
+DEFAULT_OUT_ROOT = Path("exp/netting-paper")
 BEACON_SHARD_ID = 2147483646
 SOLVER_SHARD_ID = 2147483645
 SUPERVISOR_SHARD_ID = 2147483647
@@ -121,6 +121,11 @@ def main() -> int:
     parser.add_argument("--batch-size", type=non_negative_int, help="override netting batch_size; 0 disables size-triggered window close")
     parser.add_argument("--settlement-chunk-size", type=positive_int, help="max intent records per settlement chunk")
     parser.add_argument("--max-window-ms", type=positive_int, help="override netting max_window_duration_ms")
+    parser.add_argument(
+        "--network-latency-ms",
+        type=non_negative_int,
+        help="override direct-RPC simulated network latency in ms",
+    )
     parser.add_argument("--go", default=os.environ.get("GO", "go"), help="Go compiler path")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument(
@@ -158,6 +163,7 @@ def main() -> int:
         args.batch_size,
         args.settlement_chunk_size,
         args.max_window_ms,
+        args.network_latency_ms,
     )
     validate_specs(specs)
     if args.dry_run:
@@ -195,6 +201,7 @@ def main() -> int:
             "batch_size": args.batch_size,
             "settlement_chunk_size": args.settlement_chunk_size,
             "max_window_ms": args.max_window_ms,
+            "network_latency_ms": args.network_latency_ms,
             "gocache": os.environ.get("GOCACHE", ""),
         },
         repo,
@@ -337,6 +344,7 @@ def build_specs(
     batch_size_override: Optional[int] = None,
     settlement_chunk_size_override: Optional[int] = None,
     max_window_ms_override: Optional[int] = None,
+    network_latency_ms_override: Optional[int] = None,
 ) -> list[RunSpec]:
     block_limit = block_limit_override or BLOCK_SIZE_LIMIT
     default_max_window_ms = max_window_ms_override or DEFAULT_MAX_WINDOW_MS
@@ -529,6 +537,8 @@ def build_specs(
         specs = [replace(spec, shard_num=shard_num_override) for spec in specs]
     if node_num_override is not None:
         specs = [replace(spec, node_num=node_num_override) for spec in specs]
+    if network_latency_ms_override is not None:
+        specs = [replace(spec, network_latency_ms=network_latency_ms_override) for spec in specs]
     return specs
 
 

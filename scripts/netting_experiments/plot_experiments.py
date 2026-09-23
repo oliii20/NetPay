@@ -46,7 +46,7 @@ STAGE_FIELDS = [
 RELAY_METHODS = {"static_relay", "clpa_relay"}
 BROKER_METHODS = {"static_broker", "clpa_broker"}
 CLPA_METHODS = {"clpa_relay", "clpa_broker"}
-DEFAULT_SUMMARY = Path(".exp/netting-paper/latest/summary.csv")
+DEFAULT_SUMMARY = Path("exp/netting-paper/latest/summary.csv")
 
 
 def main() -> int:
