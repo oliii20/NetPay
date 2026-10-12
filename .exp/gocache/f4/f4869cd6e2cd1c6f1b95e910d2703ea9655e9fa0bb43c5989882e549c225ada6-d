@@ -1,0 +1,5 @@
+./addrinfo.go
+./addrinfo_serde.go
+./peer.go
+./peer_serde.go
+./record.go

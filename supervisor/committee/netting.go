@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/HuangLab-SYSU/block-emulator-x/config"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
@@ -19,14 +20,20 @@ type nettingWorkload struct {
 	enabled    bool
 	shardCount int64
 	chainID    uint64
+	hotShards  map[int64]struct{}
 	nonces     map[account.Address]uint64
 	injected   map[intent.ID]struct{}
 	completed  map[intent.ID]struct{}
 }
 
-func newNettingWorkload(enabled bool, shardCount, chainID int64) *nettingWorkload {
+func newNettingWorkload(cfg config.NettingCfg, shardCount, chainID int64) *nettingWorkload {
+	hotShards := make(map[int64]struct{}, len(cfg.HotShards))
+	for _, shardID := range cfg.HotShards {
+		hotShards[shardID] = struct{}{}
+	}
+
 	return &nettingWorkload{
-		enabled: enabled, shardCount: shardCount, chainID: uint64(chainID),
+		enabled: cfg.Enabled, shardCount: shardCount, chainID: uint64(chainID), hotShards: hotShards,
 		nonces:   make(map[account.Address]uint64),
 		injected: make(map[intent.ID]struct{}), completed: make(map[intent.ID]struct{}),
 	}
@@ -40,7 +47,7 @@ func (n *nettingWorkload) convert(txs []transaction.Transaction) ([]transaction.
 	for _, tx := range txs {
 		source := partition.DefaultAccountLoc(tx.Sender, n.shardCount)
 		destination := partition.DefaultAccountLoc(tx.Recipient, n.shardCount)
-		if source == destination || tx.TxType() != transaction.NormalTxType {
+		if source == destination || tx.TxType() != transaction.NormalTxType || !n.isNettingShardPair(source, destination) {
 			converted = append(converted, tx)
 			continue
 		}
@@ -61,6 +68,17 @@ func (n *nettingWorkload) convert(txs []transaction.Transaction) ([]transaction.
 	}
 
 	return converted, nil
+}
+
+func (n *nettingWorkload) isNettingShardPair(source, destination int64) bool {
+	if len(n.hotShards) == 0 {
+		return true
+	}
+
+	_, sourceHot := n.hotShards[source]
+	_, destinationHot := n.hotShards[destination]
+
+	return sourceHot && destinationHot
 }
 
 func (n *nettingWorkload) handleProgress(wrapped *rpcserver.WrappedMsg) error {

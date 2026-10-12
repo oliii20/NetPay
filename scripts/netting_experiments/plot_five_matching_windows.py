@@ -9,6 +9,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -79,7 +80,7 @@ def parse_run_ids(raw: str) -> list[str]:
     return [part.strip() for part in raw.split(",") if part.strip()]
 
 
-def select_runs(summary_path: Path, count: int, run_ids: list[str] | None = None) -> list[SelectedRun]:
+def select_runs(summary_path: Path, count: int, run_ids: Optional[list[str]] = None) -> list[SelectedRun]:
     rows = read_rows(summary_path)
     wanted = set(run_ids or [])
     candidates = [

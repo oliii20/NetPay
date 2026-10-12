@@ -1,0 +1,5 @@
+./decay.go
+./gater.go
+./manager.go
+./null.go
+./presets.go

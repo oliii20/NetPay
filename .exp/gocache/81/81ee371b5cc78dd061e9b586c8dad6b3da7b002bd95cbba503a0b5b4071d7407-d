@@ -1,0 +1,7 @@
+./core.go
+./levels.go
+./log.go
+./path_other.go
+./pipe.go
+./setup.go
+./slog_bridge.go

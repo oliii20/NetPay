@@ -1,0 +1,9 @@
+./bool.go
+./bytes.go
+./delim.go
+./float.go
+./int.go
+./link.go
+./list.go
+./map.go
+./string.go

@@ -1,0 +1,8 @@
+./encode.go
+./hash.go
+./hasher.go
+./interface.go
+./proof.go
+./testutil.go
+./tree.go
+./wrapper.go

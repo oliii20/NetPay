@@ -1,0 +1,3 @@
+./brokertxblockop.go
+./relaytxblockop.go
+./txblockop.go

@@ -1,0 +1,8 @@
+./adl.go
+./codec.go
+./codecHelpers.go
+./datamodel.go
+./doc.go
+./linking.go
+./operations.go
+./schema.go

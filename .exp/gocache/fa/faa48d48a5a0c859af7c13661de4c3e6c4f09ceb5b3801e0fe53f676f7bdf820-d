@@ -1,0 +1,6 @@
+./addr_book.go
+./keybook.go
+./metadata.go
+./peerstore.go
+./protobook.go
+./sorting.go

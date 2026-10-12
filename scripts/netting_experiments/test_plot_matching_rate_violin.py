@@ -27,14 +27,14 @@ class PlotMatchingRateViolinTest(unittest.TestCase):
                         "run_id": run_id,
                         "method": "netting_static_relay",
                         "batch_count": "2",
-                        "matched_intent_ratio": "0.8",
+                        "full_matched_intent_ratio": "0.8",
                     }
                 ],
             )
             batch_metrics = root / "runs" / "repeat_01" / run_id / "results" / "netting_batch_metrics.csv"
             batch_metrics.parent.mkdir(parents=True)
             batch_metrics.write_text(
-                "WindowID,MatchedIntentRatio,MatchedValueRatio,IntentCount\n"
+                "WindowID,FullMatchedIntentRatio,MatchedValueRatio,IntentCount\n"
                 "1,0.50,0.40,10\n"
                 "2,0.75,0.70,12\n",
                 encoding="utf-8",
@@ -56,13 +56,13 @@ class PlotMatchingRateViolinTest(unittest.TestCase):
                         "run_id": "net_1",
                         "method": "netting_static_relay",
                         "batch_count": "2",
-                        "matched_intent_ratio": "0.8",
+                        "full_matched_intent_ratio": "0.8",
                     },
                     {
                         "run_id": "relay_1",
                         "method": "static_relay",
                         "batch_count": "0",
-                        "matched_intent_ratio": "0.0",
+                        "full_matched_intent_ratio": "0.0",
                     },
                 ],
             )

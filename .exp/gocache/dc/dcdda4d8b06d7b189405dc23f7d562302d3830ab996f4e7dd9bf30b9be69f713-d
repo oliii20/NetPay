@@ -1,0 +1,9 @@
+./arith.go
+./doc.go
+./element.go
+./element_arm64.go
+./element_exp.go
+./generator.go
+./vector.go
+./vector_purego.go
+./element_arm64.s

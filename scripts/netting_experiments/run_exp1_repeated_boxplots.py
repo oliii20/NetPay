@@ -11,7 +11,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional, Union
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -295,7 +295,7 @@ def method_group_order() -> list[tuple[str, str]]:
     ]
 
 
-def float_or_none(value: str) -> float | None:
+def float_or_none(value: str) -> Optional[float]:
     try:
         if value == "":
             return None
@@ -474,7 +474,7 @@ def plot_metric_boxplot_vector(groups: list[tuple[str, list[float]]], ylabel: st
     return [pdf_path, svg_path]
 
 
-def box_stats(values: list[float]) -> dict[str, float | list[float]]:
+def box_stats(values: list[float]) -> dict[str, Union[float, list[float]]]:
     vals = sorted(values)
     q1 = percentile(vals, 25)
     median = percentile(vals, 50)
@@ -525,7 +525,7 @@ def write_svg_boxplot(
     path: Path,
     labels: list[str],
     values: list[list[float]],
-    stats: list[dict[str, float | list[float]]],
+    stats: list[dict[str, Union[float, list[float]]]],
     colors: list[str],
     ylabel: str,
     ticks: list[float],
@@ -581,7 +581,7 @@ def write_pdf_boxplot(
     path: Path,
     labels: list[str],
     values: list[list[float]],
-    stats: list[dict[str, float | list[float]]],
+    stats: list[dict[str, Union[float, list[float]]]],
     colors: list[str],
     ylabel: str,
     ticks: list[float],

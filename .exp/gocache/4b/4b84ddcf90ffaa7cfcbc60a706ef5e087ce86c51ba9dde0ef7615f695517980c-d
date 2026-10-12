@@ -1,0 +1,4 @@
+./config.go
+./config_consensus.go
+./config_network.go
+./config_struct.go

@@ -1,0 +1,6 @@
+./base16.go
+./base2.go
+./base256emoji.go
+./base32.go
+./encoder.go
+./multibase.go

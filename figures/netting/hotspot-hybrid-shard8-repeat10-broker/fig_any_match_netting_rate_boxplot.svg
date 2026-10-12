@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="220" viewBox="0 0 260 220">
+<rect width="100%" height="100%" fill="white"/>
+<g font-family="Times New Roman, Times, serif" font-size="9" fill="#222222">
+<line x1="52" y1="178.00" x2="246" y2="178.00" stroke="#d9d9d9" stroke-width="0.55"/>
+<text x="45" y="181.00" text-anchor="end">0.11</text>
+<line x1="52" y1="136.50" x2="246" y2="136.50" stroke="#d9d9d9" stroke-width="0.55"/>
+<text x="45" y="139.50" text-anchor="end">0.12</text>
+<line x1="52" y1="95.00" x2="246" y2="95.00" stroke="#d9d9d9" stroke-width="0.55"/>
+<text x="45" y="98.00" text-anchor="end">0.12</text>
+<line x1="52" y1="53.50" x2="246" y2="53.50" stroke="#d9d9d9" stroke-width="0.55"/>
+<text x="45" y="56.50" text-anchor="end">0.12</text>
+<line x1="52" y1="12.00" x2="246" y2="12.00" stroke="#d9d9d9" stroke-width="0.55"/>
+<text x="45" y="15.00" text-anchor="end">0.12</text>
+<line x1="52" y1="178" x2="246" y2="178" stroke="#222222" stroke-width="0.9"/>
+<line x1="52" y1="12" x2="52" y2="178" stroke="#222222" stroke-width="0.9"/>
+<text transform="translate(14 110.00) rotate(-90)" text-anchor="middle" font-size="10">Any-match netting rate</text>
+<line x1="149.00" y1="23.45" x2="149.00" y2="166.55" stroke="#333333" stroke-width="1"/>
+<line x1="136.68" y1="23.45" x2="161.32" y2="23.45" stroke="#333333" stroke-width="1"/>
+<line x1="136.68" y1="166.55" x2="161.32" y2="166.55" stroke="#333333" stroke-width="1"/>
+<rect x="127.00" y="71.78" width="44.00" height="61.61" fill="#D55E00" fill-opacity="0.34" stroke="#222222" stroke-width="1"/>
+<line x1="127.00" y1="114.25" x2="171.00" y2="114.25" stroke="#111111" stroke-width="1.3"/>
+<circle cx="145.70" cy="166.55" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="146.43" cy="108.81" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="147.17" cy="124.29" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="147.90" cy="136.42" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="148.63" cy="119.69" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="149.37" cy="68.43" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="150.10" cy="81.82" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="150.83" cy="157.76" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="151.57" cy="23.45" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<circle cx="152.30" cy="53.16" r="1.8" fill="#D55E00" fill-opacity="0.82" stroke="white" stroke-width="0.45"/>
+<text x="149.00" y="195" text-anchor="middle">Netting</text>
+</g></svg>

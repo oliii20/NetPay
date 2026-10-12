@@ -1,0 +1,10 @@
+# test log
+getenv TMPDIR
+stat /var/folders/4g/sln25k6n6h51q0g4539rp5vw0000gn/T/TestPartitionRunnerRecordsCLPAMetrics3179311844/001
+open /var/folders/4g/sln25k6n6h51q0g4539rp5vw0000gn/T/TestPartitionRunnerRecordsCLPAMetrics3179311844/001/.clpa_repartition_metrics.csv.tmp-2786752819
+stat /var/folders/4g/sln25k6n6h51q0g4539rp5vw0000gn/T/TestPartitionRunnerRecordsCLPAMetrics3179311844/001/clpa_repartition_metrics.csv
+stat /var/folders/4g/sln25k6n6h51q0g4539rp5vw0000gn/T/TestPartitionRunnerRecordsCLPAMetrics3179311844/001
+open /var/folders/4g/sln25k6n6h51q0g4539rp5vw0000gn/T/TestPartitionRunnerRecordsCLPAMetrics3179311844/001/.clpa_repartition_metrics.csv.tmp-879319422
+stat /var/folders/4g/sln25k6n6h51q0g4539rp5vw0000gn/T/TestPartitionRunnerRecordsCLPAMetrics3179311844/001/clpa_repartition_metrics.csv
+open /var/folders/4g/sln25k6n6h51q0g4539rp5vw0000gn/T/TestPartitionRunnerRecordsCLPAMetrics3179311844/001/clpa_repartition_metrics.csv
+open /var/folders/4g/sln25k6n6h51q0g4539rp5vw0000gn/T

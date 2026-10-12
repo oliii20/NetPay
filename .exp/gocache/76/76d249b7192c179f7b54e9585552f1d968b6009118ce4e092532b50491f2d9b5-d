@@ -1,0 +1,3 @@
+./block.go
+./blot_db.go
+./tests.go

@@ -1,0 +1,4 @@
+./compress_generic.go
+./compress_noasm.go
+./cpu_darwin.go
+./node.go

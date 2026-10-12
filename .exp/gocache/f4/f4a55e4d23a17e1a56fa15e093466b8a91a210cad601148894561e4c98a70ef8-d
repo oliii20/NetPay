@@ -1,0 +1,11 @@
+./any.go
+./bool.go
+./bytes.go
+./bytes_stream.go
+./float.go
+./int.go
+./link.go
+./list.go
+./map.go
+./prototypes.go
+./string.go

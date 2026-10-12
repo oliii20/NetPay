@@ -1,0 +1,12 @@
+./atlas.go
+./atlasCommon.go
+./atlasEntry.go
+./doc.go
+./errors.go
+./mapMorphism.go
+./structMap.go
+./structMapAutogen.go
+./structMapBuilding.go
+./transformBuilding.go
+./transformFuncs.go
+./unionMorphism.go

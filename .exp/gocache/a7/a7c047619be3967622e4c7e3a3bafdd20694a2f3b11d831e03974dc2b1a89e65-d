@@ -1,0 +1,3 @@
+./generate.go
+./replicaconn.pb.go
+./replicaconn_grpc.pb.go

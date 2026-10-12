@@ -1,0 +1,9 @@
+./errors.go
+./kind.go
+./maybe.go
+./tmpBuilders.go
+./type.go
+./typeMethods.go
+./typedNode.go
+./typesystem.go
+./validate.go

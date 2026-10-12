@@ -1,0 +1,3 @@
+./connmgr.go
+./decay.go
+./options.go

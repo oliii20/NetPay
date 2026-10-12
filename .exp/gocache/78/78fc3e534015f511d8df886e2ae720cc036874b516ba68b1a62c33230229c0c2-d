@@ -1,0 +1,11 @@
+./copy.go
+./doc.go
+./equal.go
+./errors.go
+./kind.go
+./link.go
+./node.go
+./nodeBuilder.go
+./path.go
+./pathSegment.go
+./unit.go

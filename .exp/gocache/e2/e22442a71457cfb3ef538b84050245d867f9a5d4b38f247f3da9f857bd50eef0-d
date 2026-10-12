@@ -1,0 +1,6 @@
+./console.go
+./doc.go
+./event.go
+./logger.go
+./slog.go
+./zap.go

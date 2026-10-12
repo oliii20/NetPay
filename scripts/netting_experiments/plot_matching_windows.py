@@ -9,6 +9,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from plot_experiments import (
     DEFAULT_SUMMARY,
@@ -23,7 +24,7 @@ from plot_experiments import (
 
 BATCH_METRICS_FILE = "netting_batch_metrics.csv"
 METRICS = {
-    "intent": ("MatchedIntentRatio", "Intent matching rate"),
+    "intent": ("FullMatchedIntentRatio", "Netting rate"),
     "value": ("MatchedValueRatio", "Value matching rate"),
 }
 
@@ -87,8 +88,8 @@ def main() -> int:
 
 
 def resolve_batch_metrics(
-    batch_metrics: Path | None,
-    run_dir: Path | None,
+    batch_metrics: Optional[Path],
+    run_dir: Optional[Path],
     summary: Path,
     run_id: str,
 ) -> tuple[Path, str]:

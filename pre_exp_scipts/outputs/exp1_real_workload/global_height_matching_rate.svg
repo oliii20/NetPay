@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="88" y="30" font-family="Arial" font-size="20" font-weight="700">Global full-match CTX rate by block height</text>
+<line x1="88" y1="456" x2="1248" y2="456" stroke="#111827"/>
+<line x1="88" y1="48" x2="88" y2="456" stroke="#111827"/>
+<text x="668" y="528" font-family="Arial" font-size="14" text-anchor="middle" fill="#111827">Block height</text>
+<text transform="translate(24,252) rotate(-90)" font-family="Arial" font-size="14" text-anchor="middle" fill="#111827">Full-match CTX rate</text>
+<line x1="88" y1="456" x2="1248" y2="456" stroke="#e5e7eb"/>
+<text x="80" y="460" font-family="Arial" font-size="12" text-anchor="end" fill="#374151">0.0</text>
+<line x1="88" y1="375" x2="1248" y2="375" stroke="#e5e7eb"/>
+<text x="80" y="379" font-family="Arial" font-size="12" text-anchor="end" fill="#374151">0.2</text>
+<line x1="88" y1="293" x2="1248" y2="293" stroke="#e5e7eb"/>
+<text x="80" y="297" font-family="Arial" font-size="12" text-anchor="end" fill="#374151">0.4</text>
+<line x1="88" y1="212" x2="1248" y2="212" stroke="#e5e7eb"/>
+<text x="80" y="216" font-family="Arial" font-size="12" text-anchor="end" fill="#374151">0.6</text>
+<line x1="88" y1="130" x2="1248" y2="130" stroke="#e5e7eb"/>
+<text x="80" y="134" font-family="Arial" font-size="12" text-anchor="end" fill="#374151">0.8</text>
+<line x1="88" y1="48" x2="1248" y2="48" stroke="#e5e7eb"/>
+<text x="80" y="52" font-family="Arial" font-size="12" text-anchor="end" fill="#374151">1.0</text>
+<rect x="93.24" y="51.09" width="26.94" height="404.91" fill="#2563eb"/>
+<text transform="translate(106.71,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">1</text>
+<rect x="130.66" y="51.75" width="26.94" height="404.25" fill="#2563eb"/>
+<text transform="translate(144.13,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">2</text>
+<rect x="168.08" y="50.85" width="26.94" height="405.15" fill="#2563eb"/>
+<text transform="translate(181.55,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">3</text>
+<rect x="205.50" y="51.05" width="26.94" height="404.95" fill="#2563eb"/>
+<text transform="translate(218.97,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">4</text>
+<rect x="242.92" y="50.97" width="26.94" height="405.03" fill="#2563eb"/>
+<text transform="translate(256.39,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">5</text>
+<rect x="280.34" y="51.78" width="26.94" height="404.22" fill="#2563eb"/>
+<text transform="translate(293.81,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">6</text>
+<rect x="317.75" y="50.72" width="26.94" height="405.28" fill="#2563eb"/>
+<text transform="translate(331.23,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">7</text>
+<rect x="355.17" y="50.23" width="26.94" height="405.77" fill="#2563eb"/>
+<text transform="translate(368.65,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">8</text>
+<rect x="392.59" y="51.74" width="26.94" height="404.26" fill="#2563eb"/>
+<text transform="translate(406.06,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">9</text>
+<rect x="430.01" y="51.63" width="26.94" height="404.37" fill="#2563eb"/>
+<text transform="translate(443.48,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">10</text>
+<rect x="467.43" y="51.13" width="26.94" height="404.87" fill="#2563eb"/>
+<text transform="translate(480.90,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">11</text>
+<rect x="504.85" y="51.25" width="26.94" height="404.75" fill="#2563eb"/>
+<text transform="translate(518.32,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">12</text>
+<rect x="542.27" y="50.67" width="26.94" height="405.33" fill="#2563eb"/>
+<text transform="translate(555.74,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">13</text>
+<rect x="579.69" y="51.19" width="26.94" height="404.81" fill="#2563eb"/>
+<text transform="translate(593.16,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">14</text>
+<rect x="617.11" y="51.96" width="26.94" height="404.04" fill="#2563eb"/>
+<text transform="translate(630.58,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">15</text>
+<rect x="654.53" y="51.52" width="26.94" height="404.48" fill="#2563eb"/>
+<text transform="translate(668.00,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">16</text>
+<rect x="691.95" y="51.48" width="26.94" height="404.52" fill="#2563eb"/>
+<text transform="translate(705.42,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">17</text>
+<rect x="729.37" y="51.87" width="26.94" height="404.13" fill="#2563eb"/>
+<text transform="translate(742.84,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">18</text>
+<rect x="766.79" y="51.41" width="26.94" height="404.59" fill="#2563eb"/>
+<text transform="translate(780.26,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">19</text>
+<rect x="804.21" y="52.66" width="26.94" height="403.34" fill="#2563eb"/>
+<text transform="translate(817.68,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">20</text>
+<rect x="841.63" y="51.89" width="26.94" height="404.11" fill="#2563eb"/>
+<text transform="translate(855.10,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">21</text>
+<rect x="879.05" y="51.25" width="26.94" height="404.75" fill="#2563eb"/>
+<text transform="translate(892.52,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">22</text>
+<rect x="916.46" y="51.13" width="26.94" height="404.87" fill="#2563eb"/>
+<text transform="translate(929.94,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">23</text>
+<rect x="953.88" y="50.86" width="26.94" height="405.14" fill="#2563eb"/>
+<text transform="translate(967.35,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">24</text>
+<rect x="991.30" y="50.77" width="26.94" height="405.23" fill="#2563eb"/>
+<text transform="translate(1004.77,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">25</text>
+<rect x="1028.72" y="50.52" width="26.94" height="405.48" fill="#2563eb"/>
+<text transform="translate(1042.19,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">26</text>
+<rect x="1066.14" y="51.20" width="26.94" height="404.80" fill="#2563eb"/>
+<text transform="translate(1079.61,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">27</text>
+<rect x="1103.56" y="50.75" width="26.94" height="405.25" fill="#2563eb"/>
+<text transform="translate(1117.03,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">28</text>
+<rect x="1140.98" y="51.15" width="26.94" height="404.85" fill="#2563eb"/>
+<text transform="translate(1154.45,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">29</text>
+<rect x="1178.40" y="51.14" width="26.94" height="404.86" fill="#2563eb"/>
+<text transform="translate(1191.87,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">30</text>
+<rect x="1215.82" y="456.00" width="26.94" height="0.00" fill="#2563eb"/>
+<text transform="translate(1229.29,476) rotate(-45)" font-family="Arial" font-size="11" text-anchor="end" fill="#374151">31</text>
+</svg>

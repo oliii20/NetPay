@@ -1,0 +1,8 @@
+./advertise.go
+./announce.go
+./doc.go
+./location.go
+./monitor.go
+./option.go
+./search.go
+./ssdp.go

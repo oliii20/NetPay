@@ -1,0 +1,9 @@
+./conn.go
+./conn_bsd.go
+./doc.go
+./ipv6zone.go
+./rawconn.go
+./sys.go
+./sys_darwin.go
+./sys_unix.go
+./zsys_darwin.go

@@ -1,0 +1,13 @@
+./compressedbytepoints.go
+./curve.go
+./curve_precompute.go
+./doc.go
+./ecdh.go
+./ellipticadaptor.go
+./error.go
+./field.go
+./loadprecomputed.go
+./modnscalar.go
+./nonce.go
+./privkey.go
+./pubkey.go

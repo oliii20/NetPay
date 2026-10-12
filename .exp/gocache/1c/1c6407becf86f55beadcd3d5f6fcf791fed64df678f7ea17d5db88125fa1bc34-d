@@ -1,0 +1,5 @@
+./io.go
+./multihash.go
+./registry.go
+./set.go
+./sum.go

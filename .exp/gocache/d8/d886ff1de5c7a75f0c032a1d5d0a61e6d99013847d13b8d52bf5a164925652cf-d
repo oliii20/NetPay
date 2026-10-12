@@ -1,0 +1,7 @@
+./ecdsa.go
+./ed25519.go
+./key.go
+./key_to_stdlib.go
+./rsa_common.go
+./rsa_go.go
+./secp256k1.go

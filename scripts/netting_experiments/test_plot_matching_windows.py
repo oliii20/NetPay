@@ -15,11 +15,11 @@ from plot_matching_windows import resolve_output_path, weighted_average, window_
 class PlotMatchingWindowsTest(unittest.TestCase):
     def test_window_rates_sort_by_window_id(self) -> None:
         rows = [
-            {"WindowID": "2", "MatchedIntentRatio": "0.25", "IntentCount": "2"},
-            {"WindowID": "1", "MatchedIntentRatio": "0.75", "IntentCount": "6"},
+            {"WindowID": "2", "FullMatchedIntentRatio": "0.25", "IntentCount": "2"},
+            {"WindowID": "1", "FullMatchedIntentRatio": "0.75", "IntentCount": "6"},
         ]
 
-        windows = window_rates(rows, "MatchedIntentRatio")
+        windows = window_rates(rows, "FullMatchedIntentRatio")
 
         self.assertEqual([1, 2], [item.window_id for item in windows])
         self.assertEqual([0.75, 0.25], [item.rate for item in windows])
@@ -27,10 +27,10 @@ class PlotMatchingWindowsTest(unittest.TestCase):
     def test_weighted_average_uses_intent_count(self) -> None:
         windows = window_rates(
             [
-                {"WindowID": "1", "MatchedIntentRatio": "1.0", "IntentCount": "1"},
-                {"WindowID": "2", "MatchedIntentRatio": "0.0", "IntentCount": "3"},
+                {"WindowID": "1", "FullMatchedIntentRatio": "1.0", "IntentCount": "1"},
+                {"WindowID": "2", "FullMatchedIntentRatio": "0.0", "IntentCount": "3"},
             ],
-            "MatchedIntentRatio",
+            "FullMatchedIntentRatio",
         )
 
         self.assertAlmostEqual(0.25, weighted_average(windows))

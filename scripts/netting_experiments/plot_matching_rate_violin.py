@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -21,7 +22,7 @@ from plot_matching_windows import METRICS
 
 DEFAULT_COUNT = 20
 METRIC_KEYS = {
-    "intent": ("MatchedIntentRatio", "matched_intent_ratio", "Matching rate"),
+    "intent": ("FullMatchedIntentRatio", "full_matched_intent_ratio", "Netting rate"),
     "value": ("MatchedValueRatio", "matched_value_ratio", "Value matching rate"),
 }
 
@@ -84,7 +85,7 @@ def collect_matching_rates(
     metric: str,
     level: str,
     count: int,
-    run_ids: list[str] | None = None,
+    run_ids: Optional[list[str]] = None,
 ) -> list[MatchingRateSample]:
     batch_metric_key, summary_metric_key, _ = METRIC_KEYS[metric]
     rows = read_rows(summary_path)
@@ -118,7 +119,7 @@ def collect_matching_rates(
 def select_netting_rows(
     rows: list[dict[str, str]],
     count: int,
-    run_ids: list[str] | None = None,
+    run_ids: Optional[list[str]] = None,
 ) -> list[dict[str, str]]:
     wanted = set(run_ids or [])
     selected = [

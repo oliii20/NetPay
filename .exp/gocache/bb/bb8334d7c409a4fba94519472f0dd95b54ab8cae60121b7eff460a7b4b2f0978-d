@@ -1,0 +1,3 @@
+# test log
+open ../config
+open ./config_test.yaml

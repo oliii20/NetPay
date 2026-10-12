@@ -12,7 +12,7 @@ import zlib
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
 
 
 PALETTE = {
@@ -193,7 +193,7 @@ def aggregate(
     rows: Iterable[dict[str, str]],
     x_key: str,
     y_key: str,
-    series_key: str | None = None,
+    series_key: Optional[str] = None,
 ) -> dict[str, list[tuple[float, float, float]]]:
     grouped: dict[tuple[str, float], list[float]] = defaultdict(list)
     for row in rows:
@@ -376,6 +376,7 @@ def plot_baseline_stage_latency(rows: list[dict[str, str]], path: Path) -> None:
         "Stage latency (s)",
         910,
         80,
+        legend_top_to_bottom=True,
     )
     chart.save(path)
 
@@ -640,7 +641,7 @@ class PNGFigure:
         values: list[float],
         ylabel: str,
         highlight: int = -1,
-        y_max: float | None = None,
+        y_max: Optional[float] = None,
     ) -> None:
         max_v = y_max if y_max is not None else max(values + [1e-9]) * 1.18
         self.axes(x, y, w, h, ylabel, "", max_v)
@@ -666,6 +667,7 @@ class PNGFigure:
         ylabel: str,
         legend_x: int,
         legend_y: int,
+        legend_top_to_bottom: bool = False,
     ) -> None:
         totals = [sum(stack) for stack in stacks]
         max_v = max(totals + [1e-9]) * 1.18
@@ -680,7 +682,10 @@ class PNGFigure:
                 bottom -= sh
             self.draw_text(labels[idx], cx, y + h + 10, scale=1, anchor="center")
             self.draw_text(fmt(totals[idx]), cx, bottom - 13, scale=1, anchor="center")
-        for idx, (label, color) in enumerate(zip(stack_labels, colors)):
+        legend_entries = list(zip(stack_labels, colors))
+        if legend_top_to_bottom:
+            legend_entries.reverse()
+        for idx, (label, color) in enumerate(legend_entries):
             ly = legend_y + idx * 27
             self.rect(legend_x, ly, 18, 12, color)
             self.draw_text(label, legend_x + 28, ly - 1, scale=1)
@@ -694,10 +699,10 @@ class PNGFigure:
         series: dict[str, list[tuple[float, float, float]]],
         xlabel: str,
         ylabel: str,
-        y_max: float | None = None,
-        reference_y: float | None = None,
+        y_max: Optional[float] = None,
+        reference_y: Optional[float] = None,
         reference_label: str = "",
-        x_tick_values: list[float] | None = None,
+        x_tick_values: Optional[list[float]] = None,
     ) -> None:
         all_points = [point for values in series.values() for point in values]
         if not all_points:
@@ -753,8 +758,8 @@ class PNGFigure:
         values: list[float],
         ylabel: str,
         xlabel: str,
-        y_max: float | None = None,
-        reference_y: float | None = None,
+        y_max: Optional[float] = None,
+        reference_y: Optional[float] = None,
         reference_label: str = "",
     ) -> None:
         finite = sorted(v for v in values if math.isfinite(v))
@@ -811,7 +816,7 @@ class PNGFigure:
         h: int,
         x_min: float,
         x_max: float,
-        tick_values: list[float] | None = None,
+        tick_values: Optional[list[float]] = None,
     ) -> None:
         ticks = tick_values or [x_min + (x_max - x_min) * i / 4 for i in range(5)]
         for val in ticks:

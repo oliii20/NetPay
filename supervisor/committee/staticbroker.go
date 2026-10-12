@@ -77,7 +77,7 @@ func NewStaticBrokerCommittee(
 		txSource:          ts,
 		sl:                stopLogic{stopThreshold: cfg.ShardNum * stopThresholdPerShard, stopCnt: 0},
 		unsentTxNum:       cfg.TxNumber,
-		netting:           newNettingWorkload(cfg.NettingCfg.Enabled, cfg.ShardNum, cfg.ChainID),
+		netting:           newNettingWorkload(cfg.NettingCfg, cfg.ShardNum, cfg.ChainID),
 		cfg:               cfg,
 		brokerBalances:    brokerBalances,
 		pendingDeductions: pendingDeductions,

@@ -1,0 +1,29 @@
+{
+  "account_count": 187062,
+  "address_rows": 300000,
+  "cross_shard_tx_count": 252783,
+  "cross_shard_tx_ratio_among_address_rows": 0.84261,
+  "effective_rows": 300000,
+  "graph_rows_positive_value": 300000,
+  "hot_account_count": 93531,
+  "hot_account_cross_shard_tx_count": 69215,
+  "hot_account_cross_shard_tx_ratio_among_address_rows": 0.23071666666666665,
+  "hot_account_ratio": 0.5,
+  "hot_shard_account_loads": {
+    "0": 23383,
+    "1": 23383,
+    "2": 23383,
+    "3": 23382
+  },
+  "hot_shard_count": 4,
+  "hot_shard_ratio": 0.5,
+  "hot_shards": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "shard_num": 8,
+  "source_dataset": "/Users/ljn/Desktop/Newidea2026July/block-emulator-x-netting-dev_\u53cc\u8fb9\u51c0\u989d/data/25250000to25499999_BlockTransaction.csv",
+  "source_rows_scanned": 842556
+}

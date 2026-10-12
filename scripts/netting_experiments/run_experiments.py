@@ -81,6 +81,7 @@ class RunSpec:
     network_latency_ms: int = 0
     balance_ratio: float = 1.0
     shard_block_intervals_ms: dict[int, int] = field(default_factory=dict)
+    hot_shards: list[int] = field(default_factory=list)
     seed: int = 1
 
     @property
@@ -1171,6 +1172,7 @@ def write_config(path: Path, run_dir: Path, workload_path: Path, spec: RunSpec) 
         if not intervals:
             intervals = "  shard_block_intervals_ms:\n"
         intervals += f"    {BEACON_SHARD_ID}: {spec.beacon_block_interval_ms}\n"
+    hot_shards = ", ".join(str(shard) for shard in spec.hot_shards)
     content = f"""system:
   shard_num: {spec.shard_num}
   node_num: {spec.node_num}
@@ -1214,6 +1216,7 @@ netting:
   beacon_validation_mode: "{spec.beacon_validation_mode}"
   batch_store_path: "{run_dir}/netting/solver.db"
   beacon_store_path: "{run_dir}/netting/beacon.db"
+  hot_shards: [{hot_shards}]
 
 supervisor:
   tx_number: {spec.tx_number}
@@ -1300,20 +1303,20 @@ def summarize_netting(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[st
     batches = read_dicts(run_dir / "results" / "netting_batch_metrics.csv")
     intents = read_dicts(run_dir / "results" / "netting_intent_metrics.csv")
     completed = [row for row in intents if float_or_zero(row.get("EndToEndLatencyNs")) > 0]
-    inner_completed = [
+    legacy_completed = [
         row
         for row in legacy_detail
-        if row.get("Is cross-shard tx or not") != "true" and row.get("Tx finally commit time")
+        if row.get("Tx finally commit time")
     ]
     batch_count = len(batches)
-    inner_e2e = [
+    legacy_e2e = [
         parse_duration_from_times(row.get("Tx create time", ""), row.get("Tx finally commit time", ""))
-        for row in inner_completed
+        for row in legacy_completed
     ]
-    e2e = [float_or_zero(row.get("EndToEndLatencyNs")) / 1e9 for row in completed] + inner_e2e
+    e2e = [float_or_zero(row.get("EndToEndLatencyNs")) / 1e9 for row in completed] + legacy_e2e
     capital = [float_or_zero(row.get("CapitalLockDurationNs")) / 1e9 for row in completed]
-    original_tx_count = len(completed) + len(inner_completed)
-    tps_duration = netting_throughput_duration(legacy_brief, completed, inner_completed, elapsed_s)
+    original_tx_count = len(completed) + len(legacy_completed)
+    tps_duration = netting_throughput_duration(legacy_brief, completed, legacy_completed, elapsed_s)
     throughput = original_tx_count / tps_duration
     beacon_bytes = [
         float_or_zero(row.get("PreprepareBytes"))
@@ -1353,7 +1356,7 @@ def summarize_netting(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[st
 def netting_throughput_duration(
     legacy_brief: list[dict[str, str]],
     completed_intents: list[dict[str, str]],
-    inner_completed: list[dict[str, str]],
+    legacy_completed: list[dict[str, str]],
     elapsed_s: float,
 ) -> float:
     starts = [parse_timestamp(row.get("Epoch start time", "")) for row in legacy_brief]
@@ -1364,8 +1367,8 @@ def netting_throughput_duration(
 
     starts = [parse_timestamp(row.get("CreatedAt", "")) for row in completed_intents]
     ends = [parse_timestamp(row.get("CompletedAt", "")) for row in completed_intents]
-    starts.extend(parse_timestamp(row.get("Tx create time", "")) for row in inner_completed)
-    ends.extend(parse_timestamp(row.get("Tx finally commit time", "")) for row in inner_completed)
+    starts.extend(parse_timestamp(row.get("Tx create time", "")) for row in legacy_completed)
+    ends.extend(parse_timestamp(row.get("Tx finally commit time", "")) for row in legacy_completed)
     pairs = [(start, end) for start, end in zip(starts, ends) if start > 0 and end > 0]
     if pairs:
         return max(1e-9, max(end for _, end in pairs) - min(start for start, _ in pairs))
