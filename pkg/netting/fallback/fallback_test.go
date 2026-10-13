@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -69,26 +68,24 @@ func TestOutboxPersistsPayloadAndCompletesIdempotently(t *testing.T) {
 	require.Empty(t, pending)
 }
 
-func TestPublisherSendsPendingAndCompletionMessages(t *testing.T) {
+func TestPublisherReportsLegacyReservedFallbackCompletion(t *testing.T) {
 	t.Parallel()
 
 	item := fallbackItem()
 	p2p := &fallbackP2P{}
 	publisher := fallback.NewPublisher(
-		true, 0, &fallbackReader{items: []model.ReservedFallback{item}},
-		network.NewConnHandler(p2p), fallbackResolver{},
+		true, 0, network.NewConnHandler(p2p), fallbackResolver{},
 	)
 	committed := &block.Block{Body: block.Body{TxList: []transaction.Transaction{
 		*transaction.NewReservedFallbackTransaction(item, time.Unix(1, 0)),
 	}}}
 	require.NoError(t, publisher.PublishAfterBlock(context.Background(), committed))
-	require.Len(t, p2p.messages, 4)
+	require.Len(t, p2p.messages, 3)
 	require.Equal(t, message.FallbackCompletedMessageType, p2p.messages[0].GetMsgType())
 	require.Equal(t, message.NettingProgressMessageType, p2p.messages[2].GetMsgType())
 	var progress message.NettingProgressMsg
 	require.NoError(t, gob.NewDecoder(bytes.NewReader(p2p.messages[2].GetPayload())).Decode(&progress))
 	require.Equal(t, []intent.ID{item.IntentID}, progress.IntentIDs)
-	require.Equal(t, message.FallbackTxMessageType, p2p.messages[3].GetMsgType())
 }
 
 func TestPublisherReportsDirectFallbackIncomingProgress(t *testing.T) {
@@ -97,8 +94,7 @@ func TestPublisherReportsDirectFallbackIncomingProgress(t *testing.T) {
 	intentID := modelFallbackIntentID(9)
 	p2p := &fallbackP2P{}
 	publisher := fallback.NewPublisher(
-		true, 0, &fallbackReader{},
-		network.NewConnHandler(p2p), fallbackResolver{},
+		true, 0, network.NewConnHandler(p2p), fallbackResolver{},
 	)
 	committed := &block.Block{Body: block.Body{TxList: []transaction.Transaction{{
 		SettlementTxOpt: transaction.SettlementTxOpt{Settlement: &model.SettlementPackage{
@@ -119,15 +115,13 @@ func TestPublisherReportsDirectFallbackIncomingProgress(t *testing.T) {
 	require.Equal(t, []intent.ID{intentID}, progress.IntentIDs)
 }
 
-func TestPublisherSendsNewFallbacksWithoutPendingScan(t *testing.T) {
+func TestPublisherDoesNotCreateFallbackTxFromSettlementOutgoing(t *testing.T) {
 	t.Parallel()
 
 	item := fallbackItem()
-	reader := &fallbackReader{err: errors.New("pending scan should not run")}
 	p2p := &fallbackP2P{}
 	publisher := fallback.NewPublisher(
-		true, 0, reader,
-		network.NewConnHandler(p2p), fallbackResolver{},
+		true, 0, network.NewConnHandler(p2p), fallbackResolver{},
 	)
 	pack := item.Proof.Clone()
 	pack.Settlement = model.ShardSettlement{
@@ -146,46 +140,23 @@ func TestPublisherSendsNewFallbacksWithoutPendingScan(t *testing.T) {
 	}}}
 
 	require.NoError(t, publisher.PublishAfterBlock(context.Background(), committed))
-	require.Zero(t, reader.calls)
-	require.Len(t, p2p.messages, 1)
-	require.Equal(t, message.FallbackTxMessageType, p2p.messages[0].GetMsgType())
-	var fallbackMsg message.FallbackTxMsg
-	require.NoError(t, gob.NewDecoder(bytes.NewReader(p2p.messages[0].GetPayload())).Decode(&fallbackMsg))
-	require.Equal(t, item.Key(), fallbackMsg.Fallback.Key())
-	require.Equal(t, item.Amount, fallbackMsg.Fallback.Amount)
+	require.Empty(t, p2p.messages)
 }
 
-func TestPublisherSuppressesImmediatePendingFallbackRepublish(t *testing.T) {
+func TestPublisherDoesNotRepublishPendingFallbacks(t *testing.T) {
 	t.Parallel()
 
-	item := fallbackItem()
 	p2p := &fallbackP2P{}
-	reader := &fallbackReader{items: []model.ReservedFallback{item}}
 	publisher := fallback.NewPublisher(
-		true, 0, reader,
-		network.NewConnHandler(p2p), fallbackResolver{},
+		true, 0, network.NewConnHandler(p2p), fallbackResolver{},
 	)
 	emptyBlock := &block.Block{}
 
 	require.NoError(t, publisher.PublishAfterBlock(context.Background(), emptyBlock))
-	require.Len(t, p2p.messages, 1)
-	require.Equal(t, message.FallbackTxMessageType, p2p.messages[0].GetMsgType())
-	require.Equal(t, 1, reader.calls)
+	require.Empty(t, p2p.messages)
 
 	require.NoError(t, publisher.PublishAfterBlock(context.Background(), emptyBlock))
-	require.Len(t, p2p.messages, 1)
-	require.Equal(t, 1, reader.calls)
-}
-
-type fallbackReader struct {
-	items []model.ReservedFallback
-	err   error
-	calls int
-}
-
-func (f *fallbackReader) GetPendingFallbacks(context.Context) ([]model.ReservedFallback, error) {
-	f.calls++
-	return f.items, f.err
+	require.Empty(t, p2p.messages)
 }
 
 type fallbackP2P struct {

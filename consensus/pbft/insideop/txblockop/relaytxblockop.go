@@ -43,7 +43,7 @@ func NewRelayTxBlockOp(
 		conn:      conn,
 		resolver:  rs,
 		receipts:  receipt.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
-		fallbacks: fallback.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, c, conn, rs),
+		fallbacks: fallback.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
 		metrics: metrics.NewPublisher(
 			cfg.NettingCfg.Enabled && cfg.NettingCfg.MetricsEnabled, lp.NodeID, conn, rs,
 		),

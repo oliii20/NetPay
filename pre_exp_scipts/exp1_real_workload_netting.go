@@ -165,7 +165,11 @@ func parseFlags() config {
 	flag.IntVar(&cfg.blockSize, "block-size", 2000, "transactions per shard block")
 	flag.IntVar(&cfg.maxRows, "max-rows", 300000, "maximum valid transactions to collect after filtering invalid rows")
 	flag.Uint64Var(&cfg.chainID, "chain-id", 1, "chain ID used to derive deterministic intent IDs")
-	mode := flag.String("matcher-mode", string(matcher.FullMode), "matcher mode: full, best_fit, exact_only, fifo_split")
+	mode := flag.String(
+		"matcher-mode",
+		string(matcher.BilateralMaxFullCTXMode),
+		"matcher mode: bilateral_max_full_ctx, legacy_bilateral_full, full, best_fit, exact_only, fifo_split",
+	)
 	flag.BoolVar(&cfg.includeAllTxs, "include-all-txs-in-block-capacity", true, "count all valid sender transactions toward block capacity, even if they cannot become CTX")
 	flag.Parse()
 	cfg.matcherMode = normalizeMatcherMode(*mode)

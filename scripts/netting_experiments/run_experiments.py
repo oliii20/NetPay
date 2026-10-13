@@ -65,7 +65,7 @@ class RunSpec:
     consensus_type: str = "static_relay"
     netting_enabled: bool = True
     simplified_settlement: bool = True
-    matcher_mode: str = "full"
+    matcher_mode: str = "bilateral_max_full_ctx"
     beacon_validation_mode: str = "light"
     workload: str = "dataset"
     tx_number: int = 120
@@ -475,7 +475,7 @@ def build_specs(
                     )
                 )
         if "exp5" in selected:
-            for mode in ["exact_only", "best_fit", "full", "bilateral_max_full_ctx"]:
+            for mode in ["exact_only", "best_fit", "legacy_bilateral_full", "bilateral_max_full_ctx", "full"]:
                 specs.append(
                     RunSpec(
                         "exp5_matcher_ablation",

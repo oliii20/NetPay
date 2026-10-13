@@ -37,6 +37,7 @@ const (
 	FullMode                Mode = "full"
 	BestFitMode             Mode = "best_fit"
 	ExactOnlyMode           Mode = "exact_only"
+	LegacyBilateralFullMode Mode = "legacy_bilateral_full"
 	BilateralMaxFullCTXMode Mode = "bilateral_max_full_ctx"
 )
 
@@ -138,7 +139,7 @@ func MatchWithMode(payments []intent.PaymentIntent, mode Mode) (Output, error) {
 			allocations = append(allocations, matchExact(group)...)
 
 			if mode != ExactOnlyMode {
-				remainingAllocations, matchErr := matchRemaining(group, mode == FullMode)
+				remainingAllocations, matchErr := matchRemaining(group, mode == LegacyBilateralFullMode)
 				if matchErr != nil {
 					return Output{}, fmt.Errorf("match group %+v: %w", key, matchErr)
 				}
@@ -165,7 +166,7 @@ func NormalizeMode(mode Mode) Mode {
 		return BilateralMaxFullCTXMode
 	case FullMode:
 		return FullMode
-	case BestFitMode, ExactOnlyMode, BilateralMaxFullCTXMode:
+	case BestFitMode, ExactOnlyMode, LegacyBilateralFullMode, BilateralMaxFullCTXMode:
 		return mode
 	default:
 		return BilateralMaxFullCTXMode

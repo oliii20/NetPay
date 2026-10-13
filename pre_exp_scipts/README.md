@@ -36,7 +36,7 @@ bash pre_exp_scipts/run_exp1_real_workload_netting.sh \
   -inject-size 10000 \
   -block-size 2000 \
   -max-rows 300000 \
-  -matcher-mode full
+  -matcher-mode bilateral_max_full_ctx
 ```
 
 FIFO split matcher:

@@ -68,31 +68,52 @@ func TestMatchModesSupportAblation(t *testing.T) {
 		4: {7, 1},
 	})
 
-	full, err := matcher.MatchWithMode(payments, matcher.FullMode)
+	legacyFull, err := matcher.MatchWithMode(payments, matcher.LegacyBilateralFullMode)
 	require.NoError(t, err)
 	require.Equal(t, []matcher.Phase{
-		matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase,
-	}, allocationPhases(full))
-	requireResultAmounts(t, full, map[byte][2]int64{
-		1: {1, 4},
-		2: {1, 6},
-		3: {1, 4},
-		4: {1, 7},
+		matcher.ExactPhase, matcher.SplitPhase,
+	}, allocationPhases(legacyFull))
+	requireResultAmounts(t, legacyFull, map[byte][2]int64{
+		1: {5, 0},
+		2: {7, 0},
+		3: {5, 0},
+		4: {7, 1},
 	})
 
 	split, err := matcher.MatchWithMode([]intent.PaymentIntent{
 		matcherTestIntent(6, 0, 1, 7),
 		matcherTestIntent(7, 1, 0, 4),
 		matcherTestIntent(8, 1, 0, 3),
-	}, matcher.FullMode)
+	}, matcher.LegacyBilateralFullMode)
+	require.NoError(t, err)
+	require.Equal(t, []matcher.Phase{
+		matcher.SplitPhase, matcher.SplitPhase,
+	}, allocationPhases(split))
+	requireResultAmounts(t, split, map[byte][2]int64{
+		6: {7, 0},
+		7: {4, 0},
+		8: {3, 0},
+	})
+}
+
+func TestMatchLegacyBilateralFullModeMatchesOldFullAlgorithm(t *testing.T) {
+	t.Parallel()
+
+	output, err := matcher.MatchWithMode([]intent.PaymentIntent{
+		matcherTestIntent(1, 0, 1, 12),
+		matcherTestIntent(2, 1, 0, 4),
+		matcherTestIntent(3, 1, 0, 4),
+		matcherTestIntent(4, 1, 0, 4),
+	}, matcher.LegacyBilateralFullMode)
 	require.NoError(t, err)
 	require.Equal(t, []matcher.Phase{
 		matcher.SplitPhase, matcher.SplitPhase, matcher.SplitPhase,
-	}, allocationPhases(split))
-	requireResultAmounts(t, split, map[byte][2]int64{
-		6: {2, 5},
-		7: {1, 3},
-		8: {1, 2},
+	}, allocationPhases(output))
+	requireResultAmounts(t, output, map[byte][2]int64{
+		1: {12, 0},
+		2: {4, 0},
+		3: {4, 0},
+		4: {4, 0},
 	})
 }
 
