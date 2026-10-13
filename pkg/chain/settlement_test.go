@@ -28,7 +28,7 @@ func TestSettlementConsumesReservationsAndCreditsLocalRecipients(t *testing.T) {
 	reverse := settlementIntent(1, 0, 7, 0x32, 0x42)
 	reserveIntent(t, shard0, forward)
 	reserveIntent(t, shard1, reverse)
-	proposal, err := (batch.Builder{}).Build(window.FrozenWindow{
+	proposal, err := (batch.Builder{MatcherMode: "full"}).Build(window.FrozenWindow{
 		WindowID: 1,
 		Cuts: []model.ShardCut{
 			{ShardID: 0, EndHeight: 1, EndBlockHash: settlementHash(0x11)},
@@ -110,7 +110,7 @@ func TestSettlementExecutesMultilateralCycle(t *testing.T) {
 	for _, payment := range payments {
 		reserveIntent(t, chains[payment.SourceShard], payment)
 	}
-	proposal, err := (batch.Builder{}).Build(window.FrozenWindow{
+	proposal, err := (batch.Builder{MatcherMode: "full"}).Build(window.FrozenWindow{
 		WindowID: 1,
 		Cuts: []model.ShardCut{
 			{ShardID: 0, EndHeight: 1, EndBlockHash: settlementHash(0x31)},

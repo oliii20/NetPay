@@ -475,7 +475,7 @@ def build_specs(
                     )
                 )
         if "exp5" in selected:
-            for mode in ["exact_only", "best_fit", "full"]:
+            for mode in ["exact_only", "best_fit", "full", "bilateral_max_full_ctx"]:
                 specs.append(
                     RunSpec(
                         "exp5_matcher_ablation",

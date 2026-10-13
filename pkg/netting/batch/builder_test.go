@@ -36,7 +36,7 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(3), proposal.Header.WindowID)
 	require.Equal(t, previous, proposal.Header.PreviousBatchID)
-	require.Equal(t, "full", proposal.Header.MatcherMode)
+	require.Equal(t, "bilateral_max_full_ctx", proposal.Header.MatcherMode)
 	require.NotZero(t, proposal.Header.MatchRoot)
 	require.NotZero(t, proposal.Header.BatchID)
 	require.Equal(t, int64(0), proposal.Header.Cuts[0].ShardID)
@@ -47,20 +47,21 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 		settlements[settlement.ShardID] = settlement
 	}
 	require.Len(t, settlements[1].FallbackIncoming, 1)
-	require.Equal(t, int64(9), settlements[1].FallbackIncoming[0].FallbackAmount.Int64())
+	require.Equal(t, int64(3), settlements[1].FallbackIncoming[0].FallbackAmount.Int64())
 	require.Equal(t, proposal.Header.BatchID, metric.BatchID)
 	require.Equal(t, uint64(3), metric.WindowID)
 	require.Equal(t, 2, metric.IntentCount)
 	require.Equal(t, uint64(0), metric.WatermarkSkew)
 	require.Equal(t, time.Second, metric.WindowOpenDuration)
 	require.Equal(t, 0, metric.BestFitMatchedIntentCount)
-	require.Equal(t, 2, metric.SplitMatchedIntentCount)
+	require.Equal(t, 0, metric.SplitMatchedIntentCount)
+	require.Equal(t, 1, metric.MaxFullMatchedIntentCount)
 	require.Equal(t, 2, metric.MatchedIntentCount)
-	require.Equal(t, 0, metric.FullMatchedIntentCount)
-	require.Equal(t, 2, metric.FallbackIntentCount)
+	require.Equal(t, 1, metric.FullMatchedIntentCount)
+	require.Equal(t, 1, metric.FallbackIntentCount)
 	require.Equal(t, "17", metric.OriginalValue)
-	require.Equal(t, "2", metric.MatchedValue)
-	require.Equal(t, "15", metric.FallbackValue)
+	require.Equal(t, "14", metric.MatchedValue)
+	require.Equal(t, "3", metric.FallbackValue)
 	require.Positive(t, metric.MatchTime)
 	require.Positive(t, metric.MerkleBuildTime)
 
@@ -68,10 +69,10 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	for _, result := range proposal.Sidecar.IntentResults {
 		bySource[result.Intent.SourceShard] = result
 	}
-	require.Equal(t, int64(1), bySource[0].MatchedAmount.Int64())
-	require.Equal(t, int64(9), bySource[0].FallbackAmount.Int64())
-	require.Equal(t, int64(1), bySource[1].MatchedAmount.Int64())
-	require.Equal(t, int64(6), bySource[1].FallbackAmount.Int64())
+	require.Equal(t, int64(7), bySource[0].MatchedAmount.Int64())
+	require.Equal(t, int64(3), bySource[0].FallbackAmount.Int64())
+	require.Equal(t, int64(7), bySource[1].MatchedAmount.Int64())
+	require.Equal(t, int64(0), bySource[1].FallbackAmount.Int64())
 
 	rebuilt, err := (batch.Builder{}).Build(frozen, previous)
 	require.NoError(t, err)
@@ -80,6 +81,14 @@ func TestBuilderCreatesDeterministicTwoLevelBatch(t *testing.T) {
 	exactOnly, err := (batch.Builder{MatcherMode: "exact_only"}).Build(frozen, previous)
 	require.NoError(t, err)
 	require.Equal(t, "exact_only", exactOnly.Header.MatcherMode)
+
+	maxFull, maxFullMetric, err := (batch.Builder{MatcherMode: "bilateral_max_full_ctx"}).BuildMeasured(frozen, previous)
+	require.NoError(t, err)
+	require.Equal(t, "bilateral_max_full_ctx", maxFull.Header.MatcherMode)
+	require.Equal(t, 1, maxFullMetric.MaxFullMatchedIntentCount)
+	require.Equal(t, 1, maxFullMetric.FullMatchedIntentCount)
+	require.Equal(t, "14", maxFullMetric.MatchedValue)
+	require.Equal(t, "3", maxFullMetric.FallbackValue)
 
 	frozen.Intents[0].Amount.SetInt64(999)
 	require.Equal(t, int64(10), bySource[0].Intent.Amount.Int64())
@@ -118,7 +127,7 @@ func TestBuilderSplitsSettlementChunks(t *testing.T) {
 		Intents: intents,
 	}
 
-	proposal, err := (batch.Builder{SettlementChunkSize: 2}).Build(frozen, merkle.Hash{})
+	proposal, err := (batch.Builder{MatcherMode: "full", SettlementChunkSize: 2}).Build(frozen, merkle.Hash{})
 	require.NoError(t, err)
 	require.Equal(t, uint32(2), proposal.Header.SettlementChunkSize)
 	require.Len(t, proposal.Sidecar.ShardSettlements, 12)

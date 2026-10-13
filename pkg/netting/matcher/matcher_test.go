@@ -24,7 +24,7 @@ func TestMatchFullModeMaximizesPositiveIntentCount(t *testing.T) {
 		matcherTestIntent(4, 1, 0, 7),
 	}
 
-	output, err := matcher.Match(payments)
+	output, err := matcher.MatchWithMode(payments, matcher.FullMode)
 	require.NoError(t, err)
 	require.Len(t, output.Allocations, 4)
 	require.Equal(t, []matcher.Phase{
@@ -111,10 +111,61 @@ func TestMatchBestFitChoosesSmallestSufficientCounterIntent(t *testing.T) {
 	require.Equal(t, byte(4), resultSender(t, output, output.Allocations[1].HigherToLowerIntentID))
 }
 
-func TestMatchFullModePrefersMorePositiveIntentsOverLargeAmount(t *testing.T) {
+func TestMatchBilateralMaxFullCTXModeMaximizesFullMatches(t *testing.T) {
 	t.Parallel()
 
-	output, err := matcher.Match([]intent.PaymentIntent{
+	payments := []intent.PaymentIntent{
+		matcherTestIntent(1, 0, 1, 6),
+		matcherTestIntent(2, 0, 1, 4),
+		matcherTestIntent(3, 1, 0, 7),
+		matcherTestIntent(4, 1, 0, 3),
+	}
+
+	output, err := matcher.MatchWithMode(payments, matcher.BilateralMaxFullCTXMode)
+	require.NoError(t, err)
+	require.Equal(t, []matcher.Phase{
+		matcher.BilateralMaxFullCTXPhase,
+		matcher.BilateralMaxFullCTXPhase,
+		matcher.BilateralMaxFullCTXPhase,
+		matcher.BilateralMaxFullCTXPhase,
+	}, allocationPhases(output))
+	requireResultAmounts(t, output, map[byte][2]int64{
+		1: {6, 0},
+		2: {4, 0},
+		3: {7, 0},
+		4: {3, 0},
+	})
+}
+
+func TestMatchDefaultsToBilateralMaxFullCTXMode(t *testing.T) {
+	t.Parallel()
+
+	payments := []intent.PaymentIntent{
+		matcherTestIntent(1, 0, 1, 10),
+		matcherTestIntent(2, 1, 0, 7),
+	}
+
+	output, err := matcher.Match(payments)
+	require.NoError(t, err)
+	require.Equal(t, []matcher.Phase{matcher.BilateralMaxFullCTXPhase}, allocationPhases(output))
+	requireResultAmounts(t, output, map[byte][2]int64{
+		1: {7, 3},
+		2: {7, 0},
+	})
+
+	emptyMode, err := matcher.MatchWithMode(payments, "")
+	require.NoError(t, err)
+	require.Equal(t, output, emptyMode)
+
+	unknownMode, err := matcher.MatchWithMode(payments, "unknown")
+	require.NoError(t, err)
+	require.Equal(t, output, unknownMode)
+}
+
+func TestMatchBilateralMaxFullCTXModePrefersMoreFullMatchesOverValue(t *testing.T) {
+	t.Parallel()
+
+	output, err := matcher.MatchWithMode([]intent.PaymentIntent{
 		matcherTestIntent(1, 0, 1, 100),
 		matcherTestIntent(2, 0, 1, 1),
 		matcherTestIntent(3, 0, 1, 1),
@@ -122,7 +173,47 @@ func TestMatchFullModePrefersMorePositiveIntentsOverLargeAmount(t *testing.T) {
 		matcherTestIntent(5, 0, 1, 1),
 		matcherTestIntent(6, 0, 1, 1),
 		matcherTestIntent(7, 1, 0, 5),
+	}, matcher.BilateralMaxFullCTXMode)
+	require.NoError(t, err)
+	requireResultAmounts(t, output, map[byte][2]int64{
+		1: {0, 100},
+		2: {1, 0},
+		3: {1, 0},
+		4: {1, 0},
+		5: {1, 0},
+		6: {1, 0},
+		7: {5, 0},
 	})
+}
+
+func TestMatchBilateralMaxFullCTXModeUsesResidualCapacity(t *testing.T) {
+	t.Parallel()
+
+	output, err := matcher.MatchWithMode([]intent.PaymentIntent{
+		matcherTestIntent(1, 0, 1, 2),
+		matcherTestIntent(2, 0, 1, 10),
+		matcherTestIntent(3, 1, 0, 5),
+	}, matcher.BilateralMaxFullCTXMode)
+	require.NoError(t, err)
+	requireResultAmounts(t, output, map[byte][2]int64{
+		1: {2, 0},
+		2: {3, 7},
+		3: {5, 0},
+	})
+}
+
+func TestMatchFullModePrefersMorePositiveIntentsOverLargeAmount(t *testing.T) {
+	t.Parallel()
+
+	output, err := matcher.MatchWithMode([]intent.PaymentIntent{
+		matcherTestIntent(1, 0, 1, 100),
+		matcherTestIntent(2, 0, 1, 1),
+		matcherTestIntent(3, 0, 1, 1),
+		matcherTestIntent(4, 0, 1, 1),
+		matcherTestIntent(5, 0, 1, 1),
+		matcherTestIntent(6, 0, 1, 1),
+		matcherTestIntent(7, 1, 0, 5),
+	}, matcher.FullMode)
 	require.NoError(t, err)
 	requireResultAmounts(t, output, map[byte][2]int64{
 		1: {0, 100},
@@ -138,7 +229,7 @@ func TestMatchFullModePrefersMorePositiveIntentsOverLargeAmount(t *testing.T) {
 func TestMatchFullModeSupportsMultilateralCycles(t *testing.T) {
 	t.Parallel()
 
-	output, err := matcher.Match([]intent.PaymentIntent{
+	output, err := matcher.MatchWithMode([]intent.PaymentIntent{
 		matcherTestIntent(1, 0, 1, 1),
 		matcherTestIntent(2, 0, 1, 1),
 		matcherTestIntent(3, 0, 1, 1),
@@ -147,7 +238,7 @@ func TestMatchFullModeSupportsMultilateralCycles(t *testing.T) {
 		matcherTestIntent(6, 0, 1, 100),
 		matcherTestIntent(7, 1, 2, 5),
 		matcherTestIntent(8, 2, 0, 5),
-	})
+	}, matcher.FullMode)
 	require.NoError(t, err)
 	requireResultAmounts(t, output, map[byte][2]int64{
 		1: {1, 0},
@@ -174,7 +265,7 @@ func TestMatchSplitConsumesSmallestAmountThenSmallestIDOnTie(t *testing.T) {
 	require.NoError(t, err)
 	firstTieID := smallerID(rightAID, rightBID)
 
-	output, err := matcher.Match([]intent.PaymentIntent{left, rightB, rightC, rightA})
+	output, err := matcher.MatchWithMode([]intent.PaymentIntent{left, rightB, rightC, rightA}, matcher.FullMode)
 	require.NoError(t, err)
 	require.Len(t, output.Allocations, 4)
 	require.Equal(t, []matcher.Phase{
@@ -204,12 +295,12 @@ func TestMatchSplitConsumesSmallestAmountThenSmallestIDOnTie(t *testing.T) {
 func TestMatchUsesSmallestIntentFirstWhenTotalsTie(t *testing.T) {
 	t.Parallel()
 
-	output, err := matcher.Match([]intent.PaymentIntent{
+	output, err := matcher.MatchWithMode([]intent.PaymentIntent{
 		matcherTestIntent(1, 0, 1, 6),
 		matcherTestIntent(2, 0, 1, 4),
 		matcherTestIntent(3, 1, 0, 7),
 		matcherTestIntent(4, 1, 0, 3),
-	})
+	}, matcher.FullMode)
 	require.NoError(t, err)
 	require.NotEmpty(t, output.Allocations)
 	requireResultAmounts(t, output, map[byte][2]int64{
@@ -233,9 +324,9 @@ func TestMatchIsDeterministicAcrossInputOrderAndGroups(t *testing.T) {
 	reversed := slices.Clone(payments)
 	slices.Reverse(reversed)
 
-	forwardOutput, err := matcher.Match(payments)
+	forwardOutput, err := matcher.MatchWithMode(payments, matcher.FullMode)
 	require.NoError(t, err)
-	reverseOutput, err := matcher.Match(reversed)
+	reverseOutput, err := matcher.MatchWithMode(reversed, matcher.FullMode)
 	require.NoError(t, err)
 	require.Equal(t, forwardOutput, reverseOutput)
 
@@ -314,11 +405,11 @@ func TestMatchRandomizedConservationOptimalityAndDeterminism(t *testing.T) {
 			payments = append(payments, matcherTestIntent(byte(lowerCount+idx+1), 1, 0, amount))
 		}
 
-		forward, err := matcher.Match(payments)
+		forward, err := matcher.MatchWithMode(payments, matcher.FullMode)
 		require.NoError(t, err, "iteration %d", iteration)
 		shuffled := slices.Clone(payments)
 		random.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-		reordered, err := matcher.Match(shuffled)
+		reordered, err := matcher.MatchWithMode(shuffled, matcher.FullMode)
 		require.NoError(t, err, "iteration %d", iteration)
 		require.Equal(t, forward, reordered, "iteration %d", iteration)
 

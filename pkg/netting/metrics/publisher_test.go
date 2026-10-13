@@ -29,7 +29,7 @@ func TestPublisherReportsCommittedLifecyclePhases(t *testing.T) {
 
 	forward := metricPayment(0, 1, 10, 1)
 	reverse := metricPayment(1, 0, 7, 2)
-	proposal, err := (batch.Builder{}).Build(window.FrozenWindow{
+	proposal, err := (batch.Builder{MatcherMode: "full"}).Build(window.FrozenWindow{
 		WindowID: 1, Cuts: []model.ShardCut{{ShardID: 0}, {ShardID: 1}},
 		Intents: []intent.PaymentIntent{forward, reverse},
 	}, merkle.Hash{})

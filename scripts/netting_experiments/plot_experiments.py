@@ -467,8 +467,8 @@ def plot_window(rows: list[dict[str, str]], path: Path) -> None:
 
 def plot_ablation(rows: list[dict[str, str]], path: Path) -> None:
     data = exp_rows(rows, "exp5_matcher_ablation")
-    modes = ["exact_only", "best_fit", "full"]
-    labels = ["Exact", "+BestFit", "+Split"]
+    modes = ["exact_only", "best_fit", "full", "bilateral_max_full_ctx"]
+    labels = ["Exact", "+BestFit", "Full", "BilateralMaxFull"]
     chart = PNGFigure(980, 310)
     chart.title("Matcher ablation", 18, 22)
     panels = [

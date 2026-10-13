@@ -28,14 +28,16 @@ const (
 	ExactPhase Phase = iota + 1
 	BestFitPhase
 	SplitPhase
+	BilateralMaxFullCTXPhase
 )
 
 type Mode string
 
 const (
-	FullMode      Mode = "full"
-	BestFitMode   Mode = "best_fit"
-	ExactOnlyMode Mode = "exact_only"
+	FullMode                Mode = "full"
+	BestFitMode             Mode = "best_fit"
+	ExactOnlyMode           Mode = "exact_only"
+	BilateralMaxFullCTXMode Mode = "bilateral_max_full_ctx"
 )
 
 type GroupKey struct {
@@ -101,7 +103,7 @@ type residualArc struct {
 }
 
 func Match(payments []intent.PaymentIntent) (Output, error) {
-	return MatchWithMode(payments, FullMode)
+	return MatchWithMode(payments, BilateralMaxFullCTXMode)
 }
 
 func MatchWithMode(payments []intent.PaymentIntent, mode Mode) (Output, error) {
@@ -130,14 +132,18 @@ func MatchWithMode(payments []intent.PaymentIntent, mode Mode) (Output, error) {
 	allocations := make([]Allocation, 0)
 	for _, key := range keys {
 		group := groups[key]
-		allocations = append(allocations, matchExact(group)...)
+		if mode == BilateralMaxFullCTXMode {
+			allocations = append(allocations, matchBilateralMaxFullCTX(group)...)
+		} else {
+			allocations = append(allocations, matchExact(group)...)
 
-		if mode != ExactOnlyMode {
-			remainingAllocations, matchErr := matchRemaining(group, mode == FullMode)
-			if matchErr != nil {
-				return Output{}, fmt.Errorf("match group %+v: %w", key, matchErr)
+			if mode != ExactOnlyMode {
+				remainingAllocations, matchErr := matchRemaining(group, mode == FullMode)
+				if matchErr != nil {
+					return Output{}, fmt.Errorf("match group %+v: %w", key, matchErr)
+				}
+				allocations = append(allocations, remainingAllocations...)
 			}
-			allocations = append(allocations, remainingAllocations...)
 		}
 
 		if invariantErr := validateGroup(group); invariantErr != nil {
@@ -155,12 +161,14 @@ func MatchWithMode(payments []intent.PaymentIntent, mode Mode) (Output, error) {
 
 func NormalizeMode(mode Mode) Mode {
 	switch mode {
-	case "", FullMode:
+	case "":
+		return BilateralMaxFullCTXMode
+	case FullMode:
 		return FullMode
-	case BestFitMode, ExactOnlyMode:
+	case BestFitMode, ExactOnlyMode, BilateralMaxFullCTXMode:
 		return mode
 	default:
-		return FullMode
+		return BilateralMaxFullCTXMode
 	}
 }
 
@@ -278,6 +286,54 @@ func matchExact(group *matchGroup) []Allocation {
 			allocation := allocate(group.key, lowerItems[idx], higherItems[idx], amount, ExactPhase)
 			allocations = append(allocations, allocation)
 		}
+	}
+
+	return allocations
+}
+
+func matchBilateralMaxFullCTX(group *matchGroup) []Allocation {
+	lower := positiveRemaining(group.lowerToHigher)
+	higher := positiveRemaining(group.higherToLower)
+	sortItemsByAmountThenID(lower)
+	sortItemsByAmountThenID(higher)
+
+	capacity := minBig(sumRemaining(lower), sumRemaining(higher))
+	allocations := make([]Allocation, 0)
+	allocations = append(allocations, matchSideMaxFullCTX(group.key, lower, capacity)...)
+	allocations = append(allocations, matchSideMaxFullCTX(group.key, higher, capacity)...)
+
+	return allocations
+}
+
+func matchSideMaxFullCTX(key GroupKey, items []*workItem, capacity *big.Int) []Allocation {
+	allocations := make([]Allocation, 0)
+	used := new(big.Int)
+	firstUnmatched := len(items)
+	for idx, item := range items {
+		next := new(big.Int).Add(used, item.remaining)
+		if next.Cmp(capacity) <= 0 {
+			allocations = append(
+				allocations,
+				allocateSingle(key, item, item.remaining, BilateralMaxFullCTXPhase),
+			)
+			used = next
+			continue
+		}
+		firstUnmatched = idx
+		break
+	}
+
+	residual := new(big.Int).Sub(capacity, used)
+	for _, item := range items[firstUnmatched:] {
+		if residual.Sign() == 0 {
+			break
+		}
+		if item.remaining.Sign() == 0 {
+			continue
+		}
+		amount := minBig(item.remaining, residual)
+		applySingleMatch(item, amount)
+		residual.Sub(residual, amount)
 	}
 
 	return allocations
@@ -750,6 +806,26 @@ func allocate(key GroupKey, lower, higher *workItem, amount *big.Int, phase Phas
 		Amount:                allocated,
 		Phase:                 phase,
 	}
+}
+
+func allocateSingle(key GroupKey, item *workItem, amount *big.Int, phase Phase) Allocation {
+	allocated := applySingleMatch(item, amount)
+
+	return Allocation{
+		Group:                 key,
+		LowerToHigherIntentID: item.id,
+		HigherToLowerIntentID: item.id,
+		Amount:                allocated,
+		Phase:                 phase,
+	}
+}
+
+func applySingleMatch(item *workItem, amount *big.Int) *big.Int {
+	allocated := new(big.Int).Set(amount)
+	item.remaining.Sub(item.remaining, allocated)
+	item.matched.Add(item.matched, allocated)
+
+	return allocated
 }
 
 func bucketByAmount(items []*workItem) map[string][]*workItem {

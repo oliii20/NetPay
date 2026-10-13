@@ -31,6 +31,7 @@ type NettingBatchMetric struct {
 	ExactMatchedIntentCount   int
 	BestFitMatchedIntentCount int
 	SplitMatchedIntentCount   int
+	MaxFullMatchedIntentCount int
 	SplitAllocationCount      int
 	MatchedIntentCount        int
 	FullMatchedIntentCount    int

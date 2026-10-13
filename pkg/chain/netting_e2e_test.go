@@ -77,7 +77,7 @@ func TestNettingPipelineAcrossFourShards(t *testing.T) {
 	require.Equal(t, "max_window_duration", frozen.CloseReason)
 	require.Len(t, frozen.Intents, len(payments))
 
-	proposal, err := (batch.Builder{}).Build(*frozen, merkle.Hash{})
+	proposal, err := (batch.Builder{MatcherMode: "full"}).Build(*frozen, merkle.Hash{})
 	require.NoError(t, err)
 	beaconStore, err := beacon.OpenStore(filepath.Join(t.TempDir(), "beacon.db"))
 	require.NoError(t, err)

@@ -121,6 +121,7 @@ func summarizeBatchMetric(
 	metric.Shards, metric.WatermarkSkew = summarizeCuts(frozen.Cuts)
 	phaseIntents := map[matcher.Phase]map[intent.ID]struct{}{
 		matcher.ExactPhase: {}, matcher.BestFitPhase: {}, matcher.SplitPhase: {},
+		matcher.BilateralMaxFullCTXPhase: {},
 	}
 	for _, allocation := range output.Allocations {
 		phaseIntents[allocation.Phase][allocation.LowerToHigherIntentID] = struct{}{}
@@ -132,6 +133,7 @@ func summarizeBatchMetric(
 	metric.ExactMatchedIntentCount = len(phaseIntents[matcher.ExactPhase])
 	metric.BestFitMatchedIntentCount = len(phaseIntents[matcher.BestFitPhase])
 	metric.SplitMatchedIntentCount = len(phaseIntents[matcher.SplitPhase])
+	metric.MaxFullMatchedIntentCount = len(phaseIntents[matcher.BilateralMaxFullCTXPhase])
 	original, matched, fallback := new(big.Int), new(big.Int), new(big.Int)
 	for _, result := range output.Results {
 		original.Add(original, result.Intent.Amount)
