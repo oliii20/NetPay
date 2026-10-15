@@ -22,10 +22,17 @@ class ScaleSample:
     seed: int
     shard_num: int
     original_ctx: int
+    matching_ctx: int
     netted_ctx: int
     fallback_ctx: int
     settlement_tx: int
     match_time_ms: float
+
+    @property
+    def fallback_ratio(self) -> float:
+        if self.matching_ctx == 0:
+            return 0.0
+        return self.fallback_ctx / self.matching_ctx
 
 
 def load_scale_samples(paths: Iterable[Path]) -> list[ScaleSample]:
@@ -43,19 +50,21 @@ def load_scale_samples(paths: Iterable[Path]) -> list[ScaleSample]:
         if baseline_row is None:
             raise SystemExit(f"missing static_relay row for seed={seed}, shards={shard_num}")
         original_ctx = integer(baseline_row, "stage_latency_tx_count")
-        converted_ctx, netted_ctx = count_netting_intents(run_dir(netting_row))
-        if converted_ctx > original_ctx or netted_ctx > converted_ctx:
+        netting_run = run_dir(netting_row)
+        matching_ctx = count_matching_intents(netting_run)
+        _, netted_ctx = count_netting_intents(netting_run)
+        if matching_ctx > original_ctx or netted_ctx > matching_ctx:
             raise SystemExit(
                 f"invalid CTX counts for seed={seed}, shards={shard_num}: "
-                f"original={original_ctx}, converted={converted_ctx}, netted={netted_ctx}"
+                f"original={original_ctx}, matching={matching_ctx}, netted={netted_ctx}"
             )
-        fallback_ctx = original_ctx - netted_ctx
+        fallback_ctx = matching_ctx - netted_ctx
         if netting_row.get("settlement_tx_count", "").strip():
             settlement_tx = integer(netting_row, "settlement_tx_count")
         else:
-            physical_tx = count_leader_block_transactions(run_dir(netting_row), shard_num)
+            physical_tx = count_leader_block_transactions(netting_run, shard_num)
             input_tx = integer(netting_row, "tx_number")
-            unconverted_ctx = original_ctx - converted_ctx
+            unconverted_ctx = original_ctx - matching_ctx
             settlement_tx = physical_tx - input_tx - unconverted_ctx
         if settlement_tx < 0:
             raise SystemExit(
@@ -66,6 +75,7 @@ def load_scale_samples(paths: Iterable[Path]) -> list[ScaleSample]:
                 seed=seed,
                 shard_num=shard_num,
                 original_ctx=original_ctx,
+                matching_ctx=matching_ctx,
                 netted_ctx=netted_ctx,
                 fallback_ctx=fallback_ctx,
                 settlement_tx=settlement_tx,
@@ -112,14 +122,22 @@ def count_netting_intents(path: Path) -> tuple[int, int]:
     metrics = path / "results" / "netting_intent_metrics.csv"
     if not metrics.is_file():
         raise SystemExit(f"netting intent metrics not found: {metrics}")
-    converted = 0
+    recorded = 0
     netted = 0
     with metrics.open(newline="", encoding="utf-8") as fp:
         for row in csv.DictReader(fp):
-            converted += 1
+            recorded += 1
             if row.get("UsedFallback", "").strip().lower() != "true":
                 netted += 1
-    return converted, netted
+    return recorded, netted
+
+
+def count_matching_intents(path: Path) -> int:
+    metrics = path / "results" / "netting_batch_metrics.csv"
+    if not metrics.is_file():
+        raise SystemExit(f"netting batch metrics not found: {metrics}")
+    with metrics.open(newline="", encoding="utf-8") as fp:
+        return sum(integer(row, "IntentCount") for row in csv.DictReader(fp))
 
 
 def count_leader_block_transactions(path: Path, shard_num: int) -> int:

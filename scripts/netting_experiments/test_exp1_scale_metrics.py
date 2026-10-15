@@ -64,6 +64,11 @@ class Exp1ScaleMetricsTest(unittest.TestCase):
                 {"UsedFallback": "false"} for _ in range(50)
             ] + [{"UsedFallback": "true"} for _ in range(10)]
             write_csv(run / "results" / "netting_intent_metrics.csv", ["UsedFallback"], intents)
+            write_csv(
+                run / "results" / "netting_batch_metrics.csv",
+                ["IntentCount"],
+                [{"IntentCount": 60}],
+            )
             # 100 input tx + 20 unconverted CTX second hops + 4 settlement tx.
             for shard_id, tx_count in enumerate([31, 31, 31, 31]):
                 write_csv(
@@ -77,8 +82,10 @@ class Exp1ScaleMetricsTest(unittest.TestCase):
             self.assertEqual(1, len(samples))
             sample = samples[0]
             self.assertEqual(80, sample.original_ctx)
+            self.assertEqual(60, sample.matching_ctx)
             self.assertEqual(50, sample.netted_ctx)
-            self.assertEqual(30, sample.fallback_ctx)
+            self.assertEqual(10, sample.fallback_ctx)
+            self.assertAlmostEqual(1 / 6, sample.fallback_ratio)
             self.assertEqual(4, sample.settlement_tx)
             self.assertEqual(2.5, sample.match_time_ms)
 
@@ -122,6 +129,11 @@ class Exp1ScaleMetricsTest(unittest.TestCase):
                 {"UsedFallback": "true"} for _ in range(10)
             ]
             write_csv(run / "results" / "netting_intent_metrics.csv", ["UsedFallback"], intents)
+            write_csv(
+                run / "results" / "netting_batch_metrics.csv",
+                ["IntentCount"],
+                [{"IntentCount": 60}],
+            )
 
             samples = load_scale_samples([summary])
 

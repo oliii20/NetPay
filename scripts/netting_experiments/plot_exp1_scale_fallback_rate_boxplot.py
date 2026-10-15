@@ -48,7 +48,7 @@ def plot(samples: list[ScaleSample], out_stem: Path, dpi: int) -> list[Path]:
 
     configure_matplotlib(dpi)
     values = [
-        [sample.fallback_ctx / sample.original_ctx * 100.0 for sample in samples if sample.shard_num == shard]
+        [sample.fallback_ratio * 100.0 for sample in samples if sample.shard_num == shard]
         for shard in SHARDS
     ]
     positions = list(range(len(SHARDS)))
