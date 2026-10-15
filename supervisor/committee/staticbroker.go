@@ -70,6 +70,11 @@ func NewStaticBrokerCommittee(
 		}
 	}
 
+	netting, err := newNettingWorkload(cfg.NettingCfg, cfg.ShardNum, cfg.ChainID)
+	if err != nil {
+		return nil, fmt.Errorf("initialize netting workload: %w", err)
+	}
+
 	return &StaticBrokerCommittee{
 		r:                 r,
 		conn:              conn,
@@ -77,7 +82,7 @@ func NewStaticBrokerCommittee(
 		txSource:          ts,
 		sl:                stopLogic{stopThreshold: cfg.ShardNum * stopThresholdPerShard, stopCnt: 0},
 		unsentTxNum:       cfg.TxNumber,
-		netting:           newNettingWorkload(cfg.NettingCfg, cfg.ShardNum, cfg.ChainID),
+		netting:           netting,
 		cfg:               cfg,
 		brokerBalances:    brokerBalances,
 		pendingDeductions: pendingDeductions,
@@ -102,8 +107,10 @@ func (s *StaticBrokerCommittee) HandleMsg(ctx context.Context, msg *rpcserver.Wr
 	if msg.GetMsgType() == message.NettingExecutionMetricMessageType {
 		return s.netting.handleExecutionMetric(msg)
 	}
-	if msg.GetMsgType() == message.NettingBatchMetricMessageType ||
-		msg.GetMsgType() == message.NettingBeaconMetricMessageType ||
+	if msg.GetMsgType() == message.NettingBatchMetricMessageType {
+		return s.netting.handleBatchMetric(msg)
+	}
+	if msg.GetMsgType() == message.NettingBeaconMetricMessageType ||
 		msg.GetMsgType() == message.MatchRootFinalizedMessageType {
 		return nil
 	}

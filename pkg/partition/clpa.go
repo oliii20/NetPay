@@ -148,9 +148,9 @@ func (cs *CLPAState) CLPAPartition() (map[[20]byte]int, float64) {
 
 			for _, u := range cs.netGraph.EdgeSet[v] {
 				uShard := cs.getVertexLocation(u)
-				if uShard == vNowShard {
-					continue
-				}
+				//if uShard == vNowShard {
+				//	continue
+				//}
 				// calculate only once for each neighbor shard.
 				if _, computed := neighborShardScore[uShard]; !computed {
 					neighborShardScore[uShard] = cs.getShardScore(v, uShard)

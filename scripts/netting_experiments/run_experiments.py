@@ -82,6 +82,10 @@ class RunSpec:
     balance_ratio: float = 1.0
     shard_block_intervals_ms: dict[int, int] = field(default_factory=dict)
     hot_shards: list[int] = field(default_factory=list)
+    pair_rate_file: str = ""
+    pair_rate_threshold: float = 0.0
+    max_netting_window: int = 0
+    max_netting_injection_ms: int = 0
     seed: int = 1
 
     @property
@@ -122,6 +126,15 @@ def main() -> int:
     parser.add_argument("--batch-size", type=non_negative_int, help="override netting batch_size; 0 disables size-triggered window close")
     parser.add_argument("--settlement-chunk-size", type=positive_int, help="max intent records per settlement chunk")
     parser.add_argument("--max-window-ms", type=positive_int, help="override netting max_window_duration_ms")
+    parser.add_argument("--pair-rate-file", type=Path, default=None, help="CSV with pair and matched_intent_rate columns")
+    parser.add_argument("--pair-rate-threshold", type=float, default=0.0, help="minimum matched_intent_rate for netting pair conversion")
+    parser.add_argument("--max-netting-window", type=non_negative_int, default=0, help="highest netting window ID allowed to receive intents; 0 disables the cap")
+    parser.add_argument(
+        "--max-netting-injection-ms",
+        type=non_negative_int,
+        default=0,
+        help="supervisor injection duration allowed to convert CTX to intents; 0 disables the cap",
+    )
     parser.add_argument(
         "--network-latency-ms",
         type=non_negative_int,
@@ -165,6 +178,10 @@ def main() -> int:
         args.settlement_chunk_size,
         args.max_window_ms,
         args.network_latency_ms,
+        str(repo_path(args.pair_rate_file, repo)) if args.pair_rate_file is not None else "",
+        args.pair_rate_threshold,
+        args.max_netting_window,
+        args.max_netting_injection_ms,
     )
     validate_specs(specs)
     if args.dry_run:
@@ -203,6 +220,10 @@ def main() -> int:
             "settlement_chunk_size": args.settlement_chunk_size,
             "max_window_ms": args.max_window_ms,
             "network_latency_ms": args.network_latency_ms,
+            "pair_rate_file": str(repo_path(args.pair_rate_file, repo)) if args.pair_rate_file is not None else "",
+            "pair_rate_threshold": args.pair_rate_threshold,
+            "max_netting_window": args.max_netting_window,
+            "max_netting_injection_ms": args.max_netting_injection_ms,
             "gocache": os.environ.get("GOCACHE", ""),
         },
         repo,
@@ -346,6 +367,10 @@ def build_specs(
     settlement_chunk_size_override: Optional[int] = None,
     max_window_ms_override: Optional[int] = None,
     network_latency_ms_override: Optional[int] = None,
+    pair_rate_file_override: str = "",
+    pair_rate_threshold_override: float = 0.0,
+    max_netting_window_override: int = 0,
+    max_netting_injection_ms_override: int = 0,
 ) -> list[RunSpec]:
     block_limit = block_limit_override or BLOCK_SIZE_LIMIT
     default_max_window_ms = max_window_ms_override or DEFAULT_MAX_WINDOW_MS
@@ -540,6 +565,14 @@ def build_specs(
         specs = [replace(spec, node_num=node_num_override) for spec in specs]
     if network_latency_ms_override is not None:
         specs = [replace(spec, network_latency_ms=network_latency_ms_override) for spec in specs]
+    if pair_rate_file_override:
+        specs = [replace(spec, pair_rate_file=pair_rate_file_override) for spec in specs]
+    if pair_rate_threshold_override > 0:
+        specs = [replace(spec, pair_rate_threshold=pair_rate_threshold_override) for spec in specs]
+    if max_netting_window_override > 0:
+        specs = [replace(spec, max_netting_window=max_netting_window_override) for spec in specs]
+    if max_netting_injection_ms_override > 0:
+        specs = [replace(spec, max_netting_injection_ms=max_netting_injection_ms_override) for spec in specs]
     return specs
 
 
@@ -1217,6 +1250,10 @@ netting:
   batch_store_path: "{run_dir}/netting/solver.db"
   beacon_store_path: "{run_dir}/netting/beacon.db"
   hot_shards: [{hot_shards}]
+  pair_rate_file: "{spec.pair_rate_file}"
+  pair_rate_threshold: {spec.pair_rate_threshold}
+  max_netting_window: {spec.max_netting_window}
+  max_netting_injection_duration_ms: {spec.max_netting_injection_ms}
 
 supervisor:
   tx_number: {spec.tx_number}
@@ -1281,6 +1318,10 @@ def summarize_run(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[str, o
         "settlement_chunk_size": spec.settlement_chunk_size,
         "max_window_ms": spec.max_window_ms,
         "matcher_mode": spec.matcher_mode,
+        "pair_rate_file": spec.pair_rate_file,
+        "pair_rate_threshold": spec.pair_rate_threshold,
+        "max_netting_window": spec.max_netting_window,
+        "max_netting_injection_ms": spec.max_netting_injection_ms,
         "network_latency_ms": spec.network_latency_ms,
         "elapsed_s": elapsed_s,
         "consensus_type": spec.consensus_type,
@@ -1728,7 +1769,9 @@ def parse_timestamp(value: str) -> float:
 SUMMARY_FIELDS = [
     "run_id", "experiment", "variable", "value", "method", "seed", "shard_num", "node_num",
     "tx_number", "block_limit", "block_interval_ms", "beacon_block_interval_ms", "batch_size",
-    "settlement_chunk_size", "max_window_ms", "matcher_mode", "network_latency_ms", "elapsed_s",
+    "settlement_chunk_size", "max_window_ms", "matcher_mode", "pair_rate_file",
+    "pair_rate_threshold", "max_netting_window", "max_netting_injection_ms",
+    "network_latency_ms", "elapsed_s",
     "consensus_type", "netting_enabled", "tx_committed", "tps_tx_count", "tps_duration_s",
     "latency_tx_count", "latency_sum_s",
     "stage_latency_tx_count", "throughput_tps", "avg_latency_s", "p50_latency_s",

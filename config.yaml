@@ -124,6 +124,16 @@ netting:
   beacon_validation_mode: "light"
   batch_store_path: "./exp/netting/solver.db"
   beacon_store_path: "./exp/netting/beacon.db"
+  # Optional: CSV with columns pair and matched_intent_rate. When set, only
+  # shard pairs whose rate is >= pair_rate_threshold are converted to intents.
+  pair_rate_file: ""
+  pair_rate_threshold: 0
+  # Optional: first netting window ID where new CTX conversion stops.
+  # Set to 8 to make newly injected cross-shard transactions use relay once W8 starts.
+  max_netting_window: 0
+  # Optional: supervisor-side injection duration for netting conversion.
+  # Set to 7000 to make newly injected cross-shard transactions use relay after 7s.
+  max_netting_injection_duration_ms: 7000
 
 supervisor:
   ### -----------------------------------------------------------------------------------

@@ -2,6 +2,8 @@ package committee
 
 import (
 	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,7 +22,7 @@ func TestNettingWorkloadConvertsCrossShardTransactionsAndTracksCompletion(t *tes
 
 	var shard0, shard1 account.Address
 	shard1[len(shard1)-1] = 1
-	workload := newNettingWorkload(config.NettingCfg{Enabled: true}, 4, 11)
+	workload := newTestNettingWorkload(t, config.NettingCfg{Enabled: true}, 4, 11)
 	txs := []transaction.Transaction{
 		*transaction.NewTransaction(shard0, shard1, big.NewInt(5), big.NewInt(0), 99, time.Unix(1, 0)),
 		*transaction.NewTransaction(shard0, shard1, big.NewInt(6), big.NewInt(0), 99, time.Unix(2, 0)),
@@ -48,7 +50,7 @@ func TestNettingWorkloadConvertsCrossShardTransactionsAndTracksCompletion(t *tes
 	require.NoError(t, workload.handleProgress(wrapped))
 	require.Equal(t, 2, workload.completedCount())
 
-	fallbackOnly := newNettingWorkload(config.NettingCfg{Enabled: true}, 4, 11)
+	fallbackOnly := newTestNettingWorkload(t, config.NettingCfg{Enabled: true}, 4, 11)
 	converted, err = fallbackOnly.convert(txs[:1])
 	require.NoError(t, err)
 	fallbackID, err := converted[0].Intent.ID()
@@ -63,7 +65,7 @@ func TestNettingWorkloadConvertsCrossShardTransactionsAndTracksCompletion(t *tes
 	require.NoError(t, fallbackOnly.handleFallbackCompleted(fallbackWrapped))
 	require.Equal(t, 1, fallbackOnly.completedCount())
 
-	executionOnly := newNettingWorkload(config.NettingCfg{Enabled: true}, 4, 11)
+	executionOnly := newTestNettingWorkload(t, config.NettingCfg{Enabled: true}, 4, 11)
 	converted, err = executionOnly.convert(txs[:1])
 	require.NoError(t, err)
 	executionID, err := converted[0].Intent.ID()
@@ -99,7 +101,7 @@ func TestNettingWorkloadOnlyConvertsHotShardPairs(t *testing.T) {
 	var shard0, shard1, shard2 account.Address
 	shard1[len(shard1)-1] = 1
 	shard2[len(shard2)-1] = 2
-	workload := newNettingWorkload(config.NettingCfg{
+	workload := newTestNettingWorkload(t, config.NettingCfg{
 		Enabled:   true,
 		HotShards: []int64{0, 1},
 	}, 4, 11)
@@ -116,4 +118,96 @@ func TestNettingWorkloadOnlyConvertsHotShardPairs(t *testing.T) {
 	require.Nil(t, converted[1].Intent)
 	require.Nil(t, converted[2].Intent)
 	require.Equal(t, 1, workload.injectedCount())
+}
+
+func TestNettingWorkloadFiltersByPairRateAllowlist(t *testing.T) {
+	t.Parallel()
+
+	pairRates := filepath.Join(t.TempDir(), "pair_rates.csv")
+	require.NoError(t, os.WriteFile(pairRates, []byte(
+		"pair,matched_intent_count,intent_count,matched_intent_rate\n"+
+			"0-1,70,100,0.700000\n"+
+			"0-2,69,100,0.690000\n"+
+			"1-2,80,100,0.800000\n",
+	), 0o600))
+
+	var shard0, shard1, shard2 account.Address
+	shard1[len(shard1)-1] = 1
+	shard2[len(shard2)-1] = 2
+	workload := newTestNettingWorkload(t, config.NettingCfg{
+		Enabled:           true,
+		PairRateFile:      pairRates,
+		PairRateThreshold: 0.7,
+	}, 4, 11)
+
+	txs := []transaction.Transaction{
+		*transaction.NewTransaction(shard0, shard1, big.NewInt(5), big.NewInt(0), 99, time.Unix(1, 0)),
+		*transaction.NewTransaction(shard0, shard2, big.NewInt(6), big.NewInt(0), 99, time.Unix(2, 0)),
+		*transaction.NewTransaction(shard2, shard1, big.NewInt(7), big.NewInt(0), 99, time.Unix(3, 0)),
+	}
+	converted, err := workload.convert(txs)
+	require.NoError(t, err)
+	require.NotNil(t, converted[0].Intent)
+	require.Nil(t, converted[1].Intent)
+	require.NotNil(t, converted[2].Intent)
+	require.Equal(t, 2, workload.injectedCount())
+}
+
+func TestNettingWorkloadStopsAfterMaxWindow(t *testing.T) {
+	t.Parallel()
+
+	var shard0, shard1 account.Address
+	shard1[len(shard1)-1] = 1
+	now := time.Unix(10, 0)
+	workload := newTestNettingWorkload(t, config.NettingCfg{
+		Enabled:             true,
+		MaxWindowDurationMS: 1000,
+		MaxNettingWindow:    1,
+	}, 4, 11)
+	workload.now = func() time.Time { return now }
+
+	tx := *transaction.NewTransaction(shard0, shard1, big.NewInt(5), big.NewInt(0), 99, now)
+	converted, err := workload.convert([]transaction.Transaction{tx})
+	require.NoError(t, err)
+	require.NotNil(t, converted[0].Intent)
+
+	now = now.Add(time.Second)
+	converted, err = workload.convert([]transaction.Transaction{tx})
+	require.NoError(t, err)
+	require.Nil(t, converted[0].Intent)
+	require.Equal(t, 1, workload.injectedCount())
+}
+
+func TestNettingWorkloadStopsAfterFinalizedMaxWindow(t *testing.T) {
+	t.Parallel()
+
+	var shard0, shard1 account.Address
+	shard1[len(shard1)-1] = 1
+	workload := newTestNettingWorkload(t, config.NettingCfg{
+		Enabled:          true,
+		MaxNettingWindow: 8,
+	}, 4, 11)
+	wrapped, err := message.WrapMsg(&message.NettingBatchMetricMsg{
+		NodeID: 0,
+		Metric: model.NettingBatchMetric{
+			WindowID: 8,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, workload.handleBatchMetric(wrapped))
+
+	tx := *transaction.NewTransaction(shard0, shard1, big.NewInt(5), big.NewInt(0), 99, time.Unix(1, 0))
+	converted, err := workload.convert([]transaction.Transaction{tx})
+	require.NoError(t, err)
+	require.Nil(t, converted[0].Intent)
+	require.Equal(t, 0, workload.injectedCount())
+}
+
+func newTestNettingWorkload(t *testing.T, cfg config.NettingCfg, shardCount, chainID int64) *nettingWorkload {
+	t.Helper()
+
+	workload, err := newNettingWorkload(cfg, shardCount, chainID)
+	require.NoError(t, err)
+
+	return workload
 }
