@@ -28,3 +28,6 @@ __pycache__/
 
 # 不要上传 macOS 自动生成的隐藏文件
 .DS_Store
+
+# 不要上传本地头脑风暴视觉伴侣会话
+.superpowers/
