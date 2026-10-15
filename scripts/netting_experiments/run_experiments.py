@@ -1390,6 +1390,9 @@ def summarize_netting(run_dir: Path, spec: RunSpec, elapsed_s: float) -> dict[st
         "capital_lock_s": mean(capital),
         "watermark_skew": mean([float_or_zero(row.get("WatermarkSkew")) for row in batches]),
         "batch_count": batch_count,
+        "settlement_tx_count": sum(
+            float_or_zero(row.get("SettlementTxCount")) for row in batches
+        ),
         **netting_stage_latencies(batches, intents),
     }
 
@@ -1451,6 +1454,7 @@ def summarize_relay(run_dir: Path, spec: RunSpec) -> dict[str, object]:
         "capital_lock_s": 0.0,
         "watermark_skew": 0.0,
         "batch_count": 0,
+        "settlement_tx_count": 0,
         **with_clpa_stage(
             relay_stage_latencies(detail),
             summarize_clpa_repartition(run_dir, spec, len(detail)),
@@ -1495,6 +1499,7 @@ def summarize_broker(run_dir: Path, spec: RunSpec) -> dict[str, object]:
         "capital_lock_s": 0.0,
         "watermark_skew": 0.0,
         "batch_count": 0,
+        "settlement_tx_count": 0,
         **with_clpa_stage(
             broker_stage_latencies(detail),
             summarize_clpa_repartition(run_dir, spec, len(detail)),
@@ -1778,7 +1783,7 @@ SUMMARY_FIELDS = [
     "p95_latency_s", "matched_value_ratio", "fallback_value_ratio", "matched_intent_ratio",
     "full_matched_intent_ratio", "fallback_intent_ratio", "split_allocations", "match_time_ms", "proof_time_ms",
     "beacon_bytes_per_intent", "cross_messages_per_tx", "capital_lock_s", "watermark_skew",
-    "batch_count", "clpa_rounds", "clpa_migrated_accounts", "clpa_partition_s",
+    "batch_count", "settlement_tx_count", "clpa_rounds", "clpa_migrated_accounts", "clpa_partition_s",
     "clpa_broadcast_s", "clpa_migration_wait_s", "clpa_total_s",
     "stage_queue_s", "stage_clpa_s", "stage_source_s", "stage_second_hop_s",
     "stage_coordination_s", "stage_transfer_s", "stage_target_s", "stage_window_s",

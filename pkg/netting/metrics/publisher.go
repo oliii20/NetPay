@@ -43,12 +43,14 @@ func (p *Publisher) PublishCommittedBlock(
 	if !p.enabled || p.nodeID != 0 {
 		return nil
 	}
-	measurements := blockMeasurements(shardID, committed, committedAt)
-	if len(measurements) == 0 {
+	measurements, settlementTxs := blockMeasurements(shardID, committed, committedAt)
+	if len(measurements) == 0 && len(settlementTxs) == 0 {
 		return nil
 	}
 
-	return p.publish(ctx, &message.NettingExecutionMetricMsg{NodeID: p.nodeID, Metrics: measurements})
+	return p.publish(ctx, &message.NettingExecutionMetricMsg{
+		NodeID: p.nodeID, Metrics: measurements, SettlementTxs: settlementTxs,
+	})
 }
 
 func (p *Publisher) publish(ctx context.Context, payload any) error {
@@ -72,8 +74,9 @@ func blockMeasurements(
 	shardID int64,
 	committed *block.Block,
 	committedAt time.Time,
-) []model.NettingExecutionMetric {
+) ([]model.NettingExecutionMetric, []model.SettlementTxMetric) {
 	measurements := make([]model.NettingExecutionMetric, 0)
+	settlementTxs := make([]model.SettlementTxMetric, 0)
 	for idx := range committed.TxList {
 		tx := &committed.TxList[idx]
 		switch tx.TxType() {
@@ -88,6 +91,13 @@ func blockMeasurements(
 				StateReadCount: 3, StateWriteCount: 7,
 			})
 		case transaction.SettlementTxType:
+			if tx.Settlement != nil {
+				settlement := tx.Settlement.Settlement
+				settlementTxs = append(settlementTxs, model.SettlementTxMetric{
+					BatchID: settlement.BatchID, WindowID: settlement.WindowID,
+					ShardID: shardID, ChunkIndex: settlement.ChunkIndex,
+				})
+			}
 			measurements = append(measurements, settlementMeasurements(shardID, tx, committedAt)...)
 		case transaction.ReservedFallbackTxType:
 			if tx.ReservedFallback == nil {
@@ -102,7 +112,7 @@ func blockMeasurements(
 		}
 	}
 
-	return measurements
+	return measurements, settlementTxs
 }
 
 func settlementMeasurements(

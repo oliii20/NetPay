@@ -57,6 +57,9 @@ func TestPublisherReportsCommittedLifecyclePhases(t *testing.T) {
 	var payload message.NettingExecutionMetricMsg
 	require.NoError(t, gob.NewDecoder(bytes.NewReader(conn.messages[0].GetPayload())).Decode(&payload))
 	require.Len(t, payload.Metrics, 4)
+	require.Equal(t, []model.SettlementTxMetric{{
+		BatchID: proposal.Header.BatchID, WindowID: 1, ShardID: 0, ChunkIndex: 0,
+	}}, payload.SettlementTxs)
 	require.Equal(t, model.MetricPhaseReservation, payload.Metrics[0].Phase)
 	require.Equal(t, createdAt, payload.Metrics[0].CreatedAt)
 	require.Equal(t, model.MetricPhaseSettlement, payload.Metrics[1].Phase)
@@ -100,6 +103,32 @@ func TestPublisherReportsDirectFallbackIncomingMetric(t *testing.T) {
 	require.True(t, payload.Metrics[0].Final)
 	require.Equal(t, int64(1), payload.Metrics[0].ShardID)
 	require.Equal(t, committedAt, payload.Metrics[0].CommittedAt)
+	require.Len(t, payload.SettlementTxs, 1)
+	require.Equal(t, int64(1), payload.SettlementTxs[0].ShardID)
+}
+
+func TestPublisherReportsSettlementTxWithoutIntentMeasurements(t *testing.T) {
+	t.Parallel()
+
+	batchID := merkle.Hash{7}
+	settlementTx := transaction.NewSettlementTransaction(
+		model.SettlementPackage{Settlement: model.ShardSettlement{
+			BatchID: batchID, WindowID: 3, ShardID: 2, ChunkIndex: 1, ChunkCount: 2,
+		}}, time.Unix(10, 0),
+	)
+	committed := &block.Block{Body: block.Body{TxList: []transaction.Transaction{*settlementTx}}}
+	conn := &metricP2P{}
+	publisher := metrics.NewPublisher(true, 0, conn, metricResolver{})
+
+	require.NoError(t, publisher.PublishCommittedBlock(context.Background(), 2, committed, time.Unix(20, 0)))
+	require.Len(t, conn.messages, 1)
+
+	var payload message.NettingExecutionMetricMsg
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(conn.messages[0].GetPayload())).Decode(&payload))
+	require.Empty(t, payload.Metrics)
+	require.Equal(t, []model.SettlementTxMetric{{
+		BatchID: batchID, WindowID: 3, ShardID: 2, ChunkIndex: 1,
+	}}, payload.SettlementTxs)
 }
 
 func metricPayment(source, destination, amount, nonce int64) intent.PaymentIntent {

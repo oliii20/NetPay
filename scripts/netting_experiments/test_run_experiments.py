@@ -160,6 +160,26 @@ class RunExperimentSummaryTest(unittest.TestCase):
         self.assertAlmostEqual(summary["fallback_value_ratio"], 0.5)
         self.assertAlmostEqual(summary["fallback_intent_ratio"], 0.5)
 
+    def test_summarize_netting_sums_settlement_tx_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            results = run_dir / "results"
+            results.mkdir()
+            with (results / "netting_batch_metrics.csv").open(
+                "w", newline="", encoding="utf-8"
+            ) as fp:
+                writer = csv.DictWriter(fp, fieldnames=["SettlementTxCount"])
+                writer.writeheader()
+                writer.writerows([{"SettlementTxCount": "3"}, {"SettlementTxCount": "5"}])
+
+            summary = runner.summarize_netting(
+                run_dir,
+                runner.RunSpec("exp", "method", "netting", shard_num=4),
+                elapsed_s=1.0,
+            )
+
+        self.assertEqual(summary["settlement_tx_count"], 8.0)
+
     def test_summarize_broker_amortizes_clpa_repartition_latency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)

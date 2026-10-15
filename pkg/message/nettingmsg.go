@@ -61,8 +61,9 @@ type NettingBeaconMetricMsg struct {
 }
 
 type NettingExecutionMetricMsg struct {
-	NodeID  int64
-	Metrics []model.NettingExecutionMetric
+	NodeID        int64
+	Metrics       []model.NettingExecutionMetric
+	SettlementTxs []model.SettlementTxMetric
 }
 
 type NettingProgressMsg struct {

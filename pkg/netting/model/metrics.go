@@ -71,3 +71,13 @@ type NettingExecutionMetric struct {
 	StateWriteCount       int64
 	ProofVerificationTime time.Duration
 }
+
+// SettlementTxMetric identifies one committed settlement transaction. A
+// settlement chunk is unique within a batch and shard, which lets the
+// supervisor de-duplicate retransmitted metric messages safely.
+type SettlementTxMetric struct {
+	BatchID    merkle.Hash
+	WindowID   uint64
+	ShardID    int64
+	ChunkIndex uint32
+}

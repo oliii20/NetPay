@@ -30,7 +30,9 @@ func TestCollectorMergesOutOfOrderEventsAndWritesStableCSVs(t *testing.T) {
 	fallbackAt := time.Unix(25, 0)
 
 	updates := []any{
-		&message.NettingExecutionMetricMsg{NodeID: 0, Metrics: []model.NettingExecutionMetric{{
+		&message.NettingExecutionMetricMsg{NodeID: 0, SettlementTxs: []model.SettlementTxMetric{{
+			BatchID: batchID, WindowID: 1, ShardID: 0, ChunkIndex: 0,
+		}}, Metrics: []model.NettingExecutionMetric{{
 			Phase: model.MetricPhaseFallback, BatchID: batchID, WindowID: 1, IntentID: intentID,
 			CommittedAt: fallbackAt, Final: true, StateReadCount: 2, StateWriteCount: 2,
 		}}},
@@ -62,6 +64,9 @@ func TestCollectorMergesOutOfOrderEventsAndWritesStableCSVs(t *testing.T) {
 	duplicate, err := message.WrapMsg(updates[3])
 	require.NoError(t, err)
 	require.NoError(t, collector.UpdateMeasureRecord(duplicate))
+	duplicateSettlement, err := message.WrapMsg(updates[0])
+	require.NoError(t, err)
+	require.NoError(t, collector.UpdateMeasureRecord(duplicateSettlement))
 	require.NoError(t, collector.OutputResultAndClose())
 
 	batchRows := readCSV(t, filepath.Join(dir, nettingstats.BatchMetricsFile))
@@ -72,6 +77,7 @@ func TestCollectorMergesOutOfOrderEventsAndWritesStableCSVs(t *testing.T) {
 	require.Equal(t, "8", csvValue(batchRows, "StateWriteCount"))
 	require.Equal(t, "3000000", csvValue(batchRows, "ProofVerificationTimeNs"))
 	require.Equal(t, "15000000000", csvValue(batchRows, "EndToEndLatencyNs"))
+	require.Equal(t, "1", csvValue(batchRows, "SettlementTxCount"))
 
 	intentRows := readCSV(t, filepath.Join(dir, nettingstats.IntentMetricsFile))
 	require.Len(t, intentRows, 2)

@@ -34,7 +34,7 @@ var batchHeaders = []string{
 	"WindowID", "BatchID", "CloseReason", "IntentCount", "ShardBlockCounts", "Cuts",
 	"WatermarkSkew", "WindowOpenDurationNs", "FrozenWindowQueueLength",
 	"ExactMatchedIntentCount", "BestFitMatchedIntentCount", "SplitMatchedIntentCount",
-	"MaxFullMatchedIntentCount", "SplitAllocationCount", "MatchedIntentRatio", "FullMatchedIntentRatio", "MatchedValueRatio", "FallbackIntentRatio",
+	"MaxFullMatchedIntentCount", "SplitAllocationCount", "SettlementTxCount", "MatchedIntentRatio", "FullMatchedIntentRatio", "MatchedValueRatio", "FallbackIntentRatio",
 	"FallbackValueRatio", "MatchTimeNs", "MerkleBuildTimeNs", "BatchProposalBytes", "SidecarBytes",
 	"BatchValidationTimeNs", "BeaconConsensusLatencyNs", "PreprepareBytes", "PrepareBytes", "CommitBytes",
 	"MatchRootStorageBytes", "SettlementLatencyNs", "FallbackLatencyNs", "EndToEndLatencyNs",
@@ -48,9 +48,10 @@ var intentHeaders = []string{
 }
 
 type batchRecord struct {
-	id     merkle.Hash
-	batch  model.NettingBatchMetric
-	beacon model.NettingBeaconMetric
+	id                merkle.Hash
+	batch             model.NettingBatchMetric
+	beacon            model.NettingBeaconMetric
+	settlementTxCount int
 }
 
 type intentRecord struct {
@@ -117,6 +118,9 @@ func (c *Collector) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 		}
 		for _, metric := range msg.Metrics {
 			c.updateExecution(metric)
+		}
+		for _, metric := range msg.SettlementTxs {
+			c.updateSettlementTx(metric)
 		}
 	}
 
@@ -206,6 +210,15 @@ func (c *Collector) updateExecution(metric model.NettingExecutionMetric) {
 	}
 }
 
+func (c *Collector) updateSettlementTx(metric model.SettlementTxMetric) {
+	key := fmt.Sprintf("settlement_tx:%x:%d:%d", metric.BatchID, metric.ShardID, metric.ChunkIndex)
+	if _, exists := c.seen[key]; exists {
+		return
+	}
+	c.seen[key] = struct{}{}
+	c.batch(metric.BatchID).settlementTxCount++
+}
+
 func (c *Collector) batch(id merkle.Hash) *batchRecord {
 	record := c.batches[id]
 	if record == nil {
@@ -240,6 +253,7 @@ func (c *Collector) batchRows() [][]string {
 			strconv.Itoa(batch.FrozenWindowQueueLength), strconv.Itoa(batch.ExactMatchedIntentCount),
 			strconv.Itoa(batch.BestFitMatchedIntentCount), strconv.Itoa(batch.SplitMatchedIntentCount),
 			strconv.Itoa(batch.MaxFullMatchedIntentCount), strconv.Itoa(batch.SplitAllocationCount),
+			strconv.Itoa(record.settlementTxCount),
 			ratioInt(batch.MatchedIntentCount, batch.IntentCount),
 			ratioInt(batch.FullMatchedIntentCount, batch.IntentCount), ratioBig(batch.MatchedValue, batch.OriginalValue),
 			ratioInt(batch.FallbackIntentCount, batch.IntentCount),
