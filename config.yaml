@@ -124,10 +124,11 @@ netting:
   beacon_validation_mode: "light"
   batch_store_path: "./exp/netting/solver.db"
   beacon_store_path: "./exp/netting/beacon.db"
-  # Optional: CSV with columns pair and matched_intent_rate. When set, only
-  # shard pairs whose rate is >= pair_rate_threshold are converted to intents.
-  pair_rate_file: ""
-  pair_rate_threshold: 0
+  # The 24-shard pre-analysis ranks every undirected shard pair by matched
+  # intent rate. Only pairs at or above 0.8 are converted to netting intents;
+  # all other transactions keep using the configured relay/broker path.
+  pair_rate_file: "./pre_exp_scipts/outputs/exp1_real_workload_shard24/pair_matching_rate_ranking.csv"
+  pair_rate_threshold: 0.8
   # Optional: first netting window ID where new CTX conversion stops.
   # Set to 8 to make newly injected cross-shard transactions use relay once W8 starts.
   max_netting_window: 0

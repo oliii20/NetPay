@@ -77,15 +77,16 @@ var bitmapFont = map[rune][]string{
 }
 
 type config struct {
-	inputPath     string
-	outputDir     string
-	shardCount    int64
-	injectSize    int
-	blockSize     int
-	maxRows       int
-	chainID       uint64
-	matcherMode   string
-	includeAllTxs bool
+	inputPath         string
+	outputDir         string
+	shardCount        int64
+	injectSize        int
+	blockSize         int
+	maxRows           int
+	chainID           uint64
+	matcherMode       string
+	pairRateThreshold float64
+	includeAllTxs     bool
 }
 
 type queuedTx struct {
@@ -165,6 +166,12 @@ func parseFlags() config {
 	flag.IntVar(&cfg.blockSize, "block-size", 2000, "transactions per shard block")
 	flag.IntVar(&cfg.maxRows, "max-rows", 300000, "maximum valid transactions to collect after filtering invalid rows")
 	flag.Uint64Var(&cfg.chainID, "chain-id", 1, "chain ID used to derive deterministic intent IDs")
+	flag.Float64Var(
+		&cfg.pairRateThreshold,
+		"pair-rate-threshold",
+		0.8,
+		"minimum matched-intent rate for the pair allowlist",
+	)
 	mode := flag.String(
 		"matcher-mode",
 		string(matcher.BilateralMaxFullCTXMode),
@@ -195,6 +202,9 @@ func run(cfg config) error {
 	}
 	if cfg.maxRows <= 0 {
 		return fmt.Errorf("max-rows must be positive")
+	}
+	if cfg.pairRateThreshold < 0 || cfg.pairRateThreshold > 1 {
+		return fmt.Errorf("pair-rate-threshold must be between 0 and 1")
 	}
 	if err := os.MkdirAll(cfg.outputDir, 0o755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
@@ -285,6 +295,13 @@ func run(cfg config) error {
 		return err
 	}
 	if err := writePairAggregateCSV(filepath.Join(cfg.outputDir, "pair_aggregate_matching_rate.csv"), aggregate); err != nil {
+		return err
+	}
+	if err := writePairRateRankingCSV(
+		filepath.Join(cfg.outputDir, "pair_matching_rate_ranking.csv"),
+		aggregate,
+		cfg.pairRateThreshold,
+	); err != nil {
 		return err
 	}
 	if err := writeDirectionalPairCSV(filepath.Join(cfg.outputDir, "directional_pair_ctx_counts.csv"), directions); err != nil {
@@ -730,6 +747,71 @@ func writePairAggregateCSV(path string, aggregate map[pairKey]*countStats) error
 	return writer.Error()
 }
 
+func writePairRateRankingCSV(path string, aggregate map[pairKey]*countStats, threshold float64) error {
+	file, writer, err := createCSV(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	defer writer.Flush()
+
+	if err := writer.Write([]string{
+		"rank", "pair", "matched_intent_count", "intent_count", "matched_intent_rate",
+		"fully_matched_intent_count", "partially_matched_intent_count", "whitelisted",
+	}); err != nil {
+		return fmt.Errorf("write pair rate ranking header: %w", err)
+	}
+
+	keys := sortedPairKeysByMatchedIntentRate(aggregate)
+	for idx, key := range keys {
+		stat := aggregate[key]
+		matched := stat.fullyMatched + stat.partialMatched
+		rate := rateFloat(matched, stat.totalCTX)
+		if err := writer.Write([]string{
+			strconv.Itoa(idx + 1),
+			fmt.Sprintf("%d-%d", key.lower, key.higher),
+			strconv.Itoa(matched),
+			strconv.Itoa(stat.totalCTX),
+			formatRate(matched, stat.totalCTX),
+			strconv.Itoa(stat.fullyMatched),
+			strconv.Itoa(stat.partialMatched),
+			strconv.FormatBool(rate >= threshold),
+		}); err != nil {
+			return fmt.Errorf("write pair rate ranking row: %w", err)
+		}
+	}
+
+	return writer.Error()
+}
+
+func sortedPairKeysByMatchedIntentRate(stats map[pairKey]*countStats) []pairKey {
+	keys := make([]pairKey, 0, len(stats))
+	for key := range stats {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left, right := stats[keys[i]], stats[keys[j]]
+		leftMatched := left.fullyMatched + left.partialMatched
+		rightMatched := right.fullyMatched + right.partialMatched
+		leftRate, rightRate := rateFloat(leftMatched, left.totalCTX), rateFloat(rightMatched, right.totalCTX)
+		if leftRate != rightRate {
+			return leftRate > rightRate
+		}
+		if leftMatched != rightMatched {
+			return leftMatched > rightMatched
+		}
+		if left.totalCTX != right.totalCTX {
+			return left.totalCTX > right.totalCTX
+		}
+		if keys[i].lower != keys[j].lower {
+			return keys[i].lower < keys[j].lower
+		}
+		return keys[i].higher < keys[j].higher
+	})
+
+	return keys
+}
+
 func writeDirectionalPairCSV(path string, directions map[directionKey]*directionStats) error {
 	file, writer, err := createCSV(path)
 	if err != nil {
@@ -847,6 +929,7 @@ func writeRunSummary(path string, cfg config, stats runStats, heights []heightSt
 		{"block_size", strconv.Itoa(cfg.blockSize)},
 		{"max_valid_txs", strconv.Itoa(cfg.maxRows)},
 		{"matcher_mode", string(cfg.matcherMode)},
+		{"pair_rate_threshold", strconv.FormatFloat(cfg.pairRateThreshold, 'f', 6, 64)},
 		{"raw_rows_processed", strconv.Itoa(stats.rawRowsProcessed)},
 		{"valid_txs_queued", strconv.Itoa(stats.queuedTxs)},
 		{"block_heights", strconv.Itoa(len(heights))},

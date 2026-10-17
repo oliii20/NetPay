@@ -39,6 +39,18 @@ bash pre_exp_scipts/run_exp1_real_workload_netting.sh \
   -matcher-mode bilateral_max_full_ctx
 ```
 
+Generate the 24-shard ranking and the `>= 0.8` allowlist used by `config.yaml`:
+
+```bash
+bash pre_exp_scipts/run_exp1_real_workload_netting.sh \
+  -shards 24 \
+  -pair-rate-threshold 0.8 \
+  -output pre_exp_scipts/outputs/exp1_real_workload_shard24
+```
+
+The ranked rate is `(fully matched intents + partially matched intents) / all
+intents` for each undirected shard pair.
+
 FIFO split matcher:
 
 ```bash
@@ -65,6 +77,8 @@ Outputs:
 - `height_matching_rate.csv`: global full-match CTX rate per block height
 - `pair_height_matching_rate.csv`: full-match CTX rate for every shard pair at every block height
 - `pair_aggregate_matching_rate.csv`: aggregate full-match CTX rate by shard pair
+- `pair_matching_rate_ranking.csv`: shard pairs ranked by matched-intent rate;
+  includes the `whitelisted` decision for `--pair-rate-threshold` (default `0.8`)
 - `directional_pair_ctx_counts.csv`: directional CTX counts such as `S0->S1` and `S1->S0`
 - `bidirectional_pair_ctx_balance.csv`: side-by-side directional counts and min/max balance ratios for each shard pair
 - `run_summary.csv`: run parameters and skipped-row counters, including how many raw CSV rows were scanned to obtain the valid transactions

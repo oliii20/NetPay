@@ -25,6 +25,9 @@ __pycache__/
 **/*.csv
 !data/
 !data/selectedTxs_300K.csv
+!pre_exp_scipts/outputs/exp1_real_workload_shard24/
+pre_exp_scipts/outputs/exp1_real_workload_shard24/*
+!pre_exp_scipts/outputs/exp1_real_workload_shard24/pair_matching_rate_ranking.csv
 
 # 不要上传 macOS 自动生成的隐藏文件
 .DS_Store
