@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"math/big"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
@@ -66,10 +67,15 @@ type SettlementPackage struct {
 	ChunkProof      merkle.Proof
 	ShardCommitment ShardCommitment
 	ShardProof      merkle.Proof
+	// Keep the exact received SPC2 bytes stable across transaction hashing and
+	// PBFT gob relays. encodedState detects subsequent semantic changes.
+	encodedWire  []byte
+	encodedState [sha256.Size]byte
 }
 
 func (p SettlementPackage) Clone() SettlementPackage {
 	cloned := p
+	cloned.encodedWire = bytes.Clone(p.encodedWire)
 	cloned.Header.Cuts = append([]ShardCut(nil), p.Header.Cuts...)
 	cloned.Settlement = p.Settlement.Clone()
 	cloned.ChunkProof.Steps = append([]merkle.Step(nil), p.ChunkProof.Steps...)
@@ -81,11 +87,14 @@ func (p SettlementPackage) Clone() SettlementPackage {
 func (p BatchProposal) Clone() BatchProposal {
 	cloned := p
 	cloned.Header.Cuts = append([]ShardCut(nil), p.Header.Cuts...)
+
 	cloned.Sidecar.FinalizedBlocks = make([]FinalizedBlockReceipt, len(p.Sidecar.FinalizedBlocks))
 	for idx := range p.Sidecar.FinalizedBlocks {
 		cloned.Sidecar.FinalizedBlocks[idx] = p.Sidecar.FinalizedBlocks[idx].Clone()
 	}
+
 	cloned.Sidecar.IntentResults = cloneIntentResults(p.Sidecar.IntentResults)
+
 	cloned.Sidecar.ShardSettlements = make([]ShardSettlement, len(p.Sidecar.ShardSettlements))
 	for idx := range p.Sidecar.ShardSettlements {
 		cloned.Sidecar.ShardSettlements[idx] = p.Sidecar.ShardSettlements[idx].Clone()

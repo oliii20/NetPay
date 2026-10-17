@@ -172,6 +172,31 @@ func (tx *Transaction) Encode() ([]byte, error) {
 // settlement package as a deterministic opaque payload. This avoids exposing
 // signed shard identifiers to go-ethereum's unsigned-only RLP reflection.
 func (tx *Transaction) EncodeRLP(writer io.Writer) error {
+	if tx.isCanonicalIntentEnvelope() {
+		payment := tx.Intent
+		return rlp.Encode(writer, struct {
+			Type             byte
+			CreateTime       time.Time
+			Version          uint8
+			ChainID          uint64
+			Sender           account.Address
+			Recipient        account.Address
+			SourceShard      uint64
+			DestinationShard uint64
+			Amount           *big.Int
+			Nonce            uint64
+			ExpiryEpoch      uint64
+			Signature        []byte
+		}{
+			Type: IntentSubmitTxType, CreateTime: tx.CreateTime,
+			Version: payment.Version, ChainID: payment.ChainID,
+			Sender: payment.Sender, Recipient: payment.Recipient,
+			SourceShard: uint64(payment.SourceShard), DestinationShard: uint64(payment.DestinationShard),
+			Amount: payment.Amount, Nonce: payment.Nonce, ExpiryEpoch: payment.ExpiryEpoch,
+			Signature: payment.Signature,
+		})
+	}
+
 	var settlementBytes []byte
 	if tx.Settlement != nil {
 		var out bytes.Buffer
@@ -229,6 +254,22 @@ func (tx *Transaction) EncodeRLP(writer io.Writer) error {
 		Settlement:       settlementBytes,
 		ReservedFallback: fallbackBytes, FallbackCompleted: completedBytes,
 	})
+}
+
+func (tx *Transaction) isCanonicalIntentEnvelope() bool {
+	if tx.Intent == nil || tx.Intent.Amount == nil || tx.Value == nil ||
+		tx.Intent.SourceShard < 0 || tx.Intent.DestinationShard < 0 ||
+		tx.Intent.AssetID != intent.NativeAssetID || tx.Sender != tx.Intent.Sender ||
+		tx.Recipient != tx.Intent.Recipient || tx.Value.Cmp(tx.Intent.Amount) != 0 || tx.Nonce != tx.Intent.Nonce ||
+		(tx.PriorityFee != nil && tx.PriorityFee.Sign() != 0) || tx.GasLimit != defaultGasLimit ||
+		len(tx.Signature) != 0 || len(tx.Data) != 0 || tx.RelayStage != 0 || len(tx.ROriginalHash) != 0 ||
+		tx.BrokerStage != 0 || tx.Broker != account.EmptyAccountAddr || len(tx.BOriginalHash) != 0 ||
+		!tx.OriginalTxCreateTime.IsZero() || tx.NonceBroker != 0 || tx.HeightLock != 0 || tx.HeightCurrent != 0 ||
+		tx.Settlement != nil || tx.ReservedFallback != nil || tx.FallbackCompleted != nil {
+		return false
+	}
+
+	return true
 }
 
 func (tx *Transaction) Hash() ([]byte, error) {

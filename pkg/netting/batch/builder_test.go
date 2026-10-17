@@ -1,6 +1,8 @@
 package batch_test
 
 import (
+	"bytes"
+	"encoding/gob"
 	"math/big"
 	"testing"
 	"time"
@@ -146,6 +148,11 @@ func TestBuilderSplitsSettlementChunks(t *testing.T) {
 		require.Equal(t, proposal.Header.BatchID, pack.Header.BatchID)
 		require.Empty(t, pack.Header.Cuts)
 		require.NoError(t, batch.VerifySettlementPackage(pack, proposal.Header))
+		var wire bytes.Buffer
+		require.NoError(t, gob.NewEncoder(&wire).Encode(pack))
+		var decoded model.SettlementPackage
+		require.NoError(t, gob.NewDecoder(&wire).Decode(&decoded))
+		require.NoError(t, batch.VerifySettlementPackage(decoded, proposal.Header))
 	}
 }
 

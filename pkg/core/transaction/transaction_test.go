@@ -1,6 +1,10 @@
 package transaction
 
 import (
+	"bytes"
+	"compress/flate"
+	"encoding/gob"
+	"io"
 	"math/big"
 	"testing"
 	"time"
@@ -94,6 +98,37 @@ func TestNewIntentTransactionCopiesEnvelopeAndIntent(t *testing.T) {
 	require.Equal(t, []byte("signature"), tx.Intent.Signature)
 }
 
+func TestCanonicalIntentUsesCompactCommitment(t *testing.T) {
+	t.Parallel()
+	payment := *transactionTestIntent([]byte("signed"))
+	tx := NewIntentTransaction(payment, time.Unix(123, 456))
+	compact, err := tx.Encode()
+	require.NoError(t, err)
+
+	legacy := *tx
+	legacy.GasLimit++ // An extra envelope field must remain committed.
+	full, err := legacy.Encode()
+	require.NoError(t, err)
+	require.Less(t, len(compact), len(full))
+	require.Greater(t, len(full)-len(compact), 70)
+
+	var wire bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&wire).Encode(tx))
+	var received Transaction
+	require.NoError(t, gob.NewDecoder(&wire).Decode(&received))
+	reencoded, err := received.Encode()
+	require.NoError(t, err)
+	require.Equal(t, compact, reencoded)
+
+	mutated := *tx
+	cloned := tx.Intent.Clone()
+	mutated.Intent = &cloned
+	mutated.Intent.Signature = []byte("different")
+	changed, err := mutated.Encode()
+	require.NoError(t, err)
+	require.NotEqual(t, compact, changed)
+}
+
 func TestSettlementTransactionTypeAndHashCommitPackage(t *testing.T) {
 	t.Parallel()
 
@@ -113,6 +148,87 @@ func TestSettlementTransactionTypeAndHashCommitPackage(t *testing.T) {
 	rightHash, err := right.Hash()
 	require.NoError(t, err)
 	require.NotEqual(t, leftHash, rightHash)
+}
+
+func TestSettlementTransactionGobRoundTripKeepsHash(t *testing.T) {
+	t.Parallel()
+	payment := *transactionTestIntent([]byte("signed-intent"))
+	payment.Sender[0] = 2
+	result, err := model.NewIntentResult(payment, big.NewInt(3))
+	require.NoError(t, err)
+	pack := model.SettlementPackage{
+		Header: model.MatchRootBlockBody{BatchID: merkle.Hash{1}},
+		Settlement: model.ShardSettlement{
+			BatchID: merkle.Hash{1}, ShardID: 0, ChunkCount: 1,
+			Outgoing: []model.IntentResult{result},
+		},
+	}
+	original := NewSettlementTransaction(pack, time.Unix(1, 0))
+	originalHash, err := original.Hash()
+	require.NoError(t, err)
+
+	var wire bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&wire).Encode(original))
+	var decoded Transaction
+	require.NoError(t, gob.NewDecoder(&wire).Decode(&decoded))
+	require.Equal(t, SettlementTxType, decoded.TxType())
+	require.Equal(t, result.IntentID, decoded.Settlement.Settlement.Outgoing[0].IntentID)
+	require.Zero(t, decoded.Settlement.Settlement.Outgoing[0].MatchedAmount.Cmp(result.MatchedAmount))
+	decodedHash, err := decoded.Hash()
+	require.NoError(t, err)
+	require.Equal(t, originalHash, decodedHash)
+}
+
+func TestSettlementTransactionHashPreservesReceivedCompression(t *testing.T) {
+	t.Parallel()
+	payment := *transactionTestIntent([]byte("signed-intent"))
+	pack := model.SettlementPackage{
+		Header:     model.MatchRootBlockBody{BatchID: merkle.Hash{1}},
+		Settlement: model.ShardSettlement{BatchID: merkle.Hash{1}, ShardID: 0, ChunkCount: 1},
+	}
+	for idx := 0; idx < 500; idx++ {
+		payment.Nonce = uint64(idx)
+		result, err := model.NewIntentResult(payment, big.NewInt(3))
+		require.NoError(t, err)
+		pack.Settlement.Outgoing = append(pack.Settlement.Outgoing, result)
+	}
+	fast, err := pack.GobEncode()
+	require.NoError(t, err)
+	require.Equal(t, "SPC2", string(fast[:4]))
+	reader := flate.NewReader(bytes.NewReader(fast[8:]))
+	plain, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	var alternate bytes.Buffer
+	_, err = alternate.Write(fast[:8])
+	require.NoError(t, err)
+	writer, err := flate.NewWriter(&alternate, flate.BestCompression)
+	require.NoError(t, err)
+	_, err = writer.Write(plain)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	require.NotEqual(t, fast, alternate.Bytes())
+
+	var received model.SettlementPackage
+	require.NoError(t, received.GobDecode(alternate.Bytes()))
+	tx := NewSettlementTransaction(received, time.Unix(1, 0))
+	before, err := tx.Hash()
+	require.NoError(t, err)
+	var wire bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&wire).Encode(tx))
+	var decoded Transaction
+	require.NoError(t, gob.NewDecoder(&wire).Decode(&decoded))
+	after, err := decoded.Hash()
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	require.Equal(t, alternate.Bytes(), mustSettlementBytes(t, decoded.Settlement))
+}
+
+func mustSettlementBytes(t *testing.T, settlement *model.SettlementPackage) []byte {
+	t.Helper()
+	encoded, err := settlement.GobEncode()
+	require.NoError(t, err)
+	return encoded
 }
 
 func TestFallbackTransactionTypesAndHashesCommitPayloads(t *testing.T) {
