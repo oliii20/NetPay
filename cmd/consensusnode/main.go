@@ -43,8 +43,9 @@ func main() {
 	if err != nil {
 		log.Fatal(fmt.Errorf("load config: %w", err))
 	}
-	if interval, ok := cfg.ConsensusNodeCfg.ShardBlockIntervalsMS[lp.ShardID]; ok && interval > 0 {
-		cfg.ConsensusNodeCfg.BlockInterval = interval
+
+	if interval, ok := cfg.ShardBlockIntervalsMS[lp.ShardID]; ok && interval > 0 {
+		cfg.BlockInterval = interval
 	}
 
 	if pprofPort != nil && *pprofPort >= pprofPortLowerBound {

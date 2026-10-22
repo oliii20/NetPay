@@ -13,6 +13,8 @@ type TxPool interface {
 	// PackTxs pops transactions from the pool.
 	// The size of transactions will be limited by the given parameter 'limit'.
 	PackTxs(limit int) ([]transaction.Transaction, error)
+	// Len returns the number of transactions currently waiting in the pool.
+	Len() int
 	// GetTxListSize returns the size of the given tx list.
 	GetTxListSize(txs []transaction.Transaction) (int, error)
 }

@@ -8,27 +8,24 @@ import (
 )
 
 type Router struct {
-	legacy  Measure
-	netting Measure
+	legacy      Measure
+	aggregation Measure
 }
 
-func NewRouter(legacy, netting Measure) *Router {
-	return &Router{legacy: legacy, netting: netting}
+func NewRouter(legacy, aggregation Measure) *Router {
+	return &Router{legacy: legacy, aggregation: aggregation}
 }
 
 func (r *Router) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 	switch wrapped.GetMsgType() {
-	case message.NettingBatchMetricMessageType,
-		message.NettingBeaconMetricMessageType,
-		message.NettingExecutionMetricMessageType:
-		return r.netting.UpdateMeasureRecord(wrapped)
+	case message.AggregationBatchMetricMessageType,
+		message.AggregationBeaconMetricMessageType,
+		message.AggregationExecutionMetricMessageType,
+		message.AggregationFinalizedMessageType,
+		message.AggregationAppliedMessageType:
+		return r.aggregation.UpdateMeasureRecord(wrapped)
 	case message.FinalizedBlockReceiptMessageType,
-		message.BatchProposalMessageType,
-		message.MatchRootFinalizedMessageType,
-		message.SettlementPackageMessageType,
-		message.FallbackTxMessageType,
-		message.FallbackCompletedMessageType,
-		message.NettingProgressMessageType:
+		message.AggregationPackageMessageType:
 		return nil
 	default:
 		return r.legacy.UpdateMeasureRecord(wrapped)
@@ -36,5 +33,5 @@ func (r *Router) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 }
 
 func (r *Router) OutputResultAndClose() error {
-	return errors.Join(r.legacy.OutputResultAndClose(), r.netting.OutputResultAndClose())
+	return errors.Join(r.legacy.OutputResultAndClose(), r.aggregation.OutputResultAndClose())
 }

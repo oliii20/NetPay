@@ -5,8 +5,8 @@ import (
 	"encoding/gob"
 	"fmt"
 
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network/rpcserver"
 )
 
@@ -35,17 +35,10 @@ func WrapProposal(b *block.Block) *Proposal {
 	return &Proposal{Block: b}
 }
 
-func WrapNettingProposal(proposal model.BatchProposal) *Proposal {
+func WrapAggregationProposal(proposal model.AggregationBatch) *Proposal {
 	cloned := proposal.Clone()
 
-	return &Proposal{NettingBatch: &cloned}
-}
-
-func WrapNettingHeaderProposal(proposal model.BatchHeaderProposal) *Proposal {
-	cloned := proposal
-	cloned.Header.Cuts = append([]model.ShardCut(nil), proposal.Header.Cuts...)
-
-	return &Proposal{NettingHeader: &cloned}
+	return &Proposal{AggregationBatch: &cloned}
 }
 
 func getMsgType(msg any) (string, error) {
@@ -69,24 +62,18 @@ func getMsgType(msg any) (string, error) {
 		msgType = CatchupRespMessageType
 	case *FinalizedBlockReceiptMsg, FinalizedBlockReceiptMsg:
 		msgType = FinalizedBlockReceiptMessageType
-	case *BatchProposalMsg, BatchProposalMsg:
-		msgType = BatchProposalMessageType
-	case *MatchRootFinalizedMsg, MatchRootFinalizedMsg:
-		msgType = MatchRootFinalizedMessageType
-	case *SettlementPackageMsg, SettlementPackageMsg:
-		msgType = SettlementPackageMessageType
-	case *FallbackTxMsg, FallbackTxMsg:
-		msgType = FallbackTxMessageType
-	case *FallbackCompletedMsg, FallbackCompletedMsg:
-		msgType = FallbackCompletedMessageType
-	case *NettingBatchMetricMsg, NettingBatchMetricMsg:
-		msgType = NettingBatchMetricMessageType
-	case *NettingBeaconMetricMsg, NettingBeaconMetricMsg:
-		msgType = NettingBeaconMetricMessageType
-	case *NettingExecutionMetricMsg, NettingExecutionMetricMsg:
-		msgType = NettingExecutionMetricMessageType
-	case *NettingProgressMsg, NettingProgressMsg:
-		msgType = NettingProgressMessageType
+	case *AggregationFinalizedMsg, AggregationFinalizedMsg:
+		msgType = AggregationFinalizedMessageType
+	case *AggregationPackageMsg, AggregationPackageMsg:
+		msgType = AggregationPackageMessageType
+	case *AggregationBatchMetricMsg, AggregationBatchMetricMsg:
+		msgType = AggregationBatchMetricMessageType
+	case *AggregationBeaconMetricMsg, AggregationBeaconMetricMsg:
+		msgType = AggregationBeaconMetricMessageType
+	case *AggregationExecutionMetricMsg, AggregationExecutionMetricMsg:
+		msgType = AggregationExecutionMetricMessageType
+	case *AggregationAppliedMsg, AggregationAppliedMsg:
+		msgType = AggregationAppliedMessageType
 
 	case *RelayBlockInfoMsg, RelayBlockInfoMsg:
 		msgType = RelayBlockInfoMessageType

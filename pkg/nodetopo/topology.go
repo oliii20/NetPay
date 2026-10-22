@@ -12,5 +12,4 @@ type NodeMapper interface {
 	ChangeLeader(shardID int64, info NodeInfo) error
 	GetAllLeaders() ([]NodeInfo, error)
 	GetSupervisor() (NodeInfo, error)
-	GetSolver() (NodeInfo, error)
 }

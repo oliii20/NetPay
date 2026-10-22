@@ -120,6 +120,7 @@ func (c *CLPABrokerCommittee) ShouldStop() bool {
 	return c.sl.stopCnt >= c.sl.stopThreshold
 }
 
+//nolint:dupl // Relay and broker committees intentionally keep independent CLPA state transitions.
 func (c *CLPABrokerCommittee) repartition(ctx context.Context) error {
 	slog.InfoContext(ctx, "repartition start")
 
@@ -143,6 +144,7 @@ func (c *CLPABrokerCommittee) repartition(ctx context.Context) error {
 	}
 
 	c.conn.GroupBroadcastMessage(ctx, allLeaders, w)
+
 	broadcastEndTime := time.Now()
 	if err = c.recordCLPARound(
 		c.supervisorEpoch,

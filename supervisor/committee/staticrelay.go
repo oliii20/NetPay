@@ -24,7 +24,7 @@ type StaticRelayCommittee struct {
 	txSource    txsource.TxSource // txSource brings the txs into the blockchain system.
 	sl          stopLogic         // sl is the logic of stop.
 	unsentTxNum int64
-	netting     *nettingWorkload
+	aggregation *aggregationWorkload
 
 	cfg config.SupervisorCfg
 }
@@ -39,9 +39,9 @@ func NewStaticRelayCommittee(
 		return nil, fmt.Errorf("NewTxSource failed: %w", err)
 	}
 
-	netting, err := newNettingWorkload(cfg.NettingCfg, cfg.ShardNum, cfg.ChainID)
+	aggregation, err := newAggregationWorkload(cfg.AggregationCfg, cfg.ShardNum, cfg.ChainID)
 	if err != nil {
-		return nil, fmt.Errorf("initialize netting workload: %w", err)
+		return nil, fmt.Errorf("initialize aggregation workload: %w", err)
 	}
 
 	return &StaticRelayCommittee{
@@ -50,7 +50,7 @@ func NewStaticRelayCommittee(
 		txSource:    ts,
 		sl:          stopLogic{stopThreshold: cfg.ShardNum * stopThresholdPerShard, stopCnt: 0},
 		unsentTxNum: cfg.TxNumber,
-		netting:     netting,
+		aggregation: aggregation,
 		cfg:         cfg,
 	}, nil
 }
@@ -64,22 +64,26 @@ func (s *StaticRelayCommittee) SendTxsAndConsensus(ctx context.Context) error {
 }
 
 func (s *StaticRelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.WrappedMsg) error {
-	if msg.GetMsgType() == message.NettingProgressMessageType {
-		return s.netting.handleProgress(msg)
+	if msg.GetMsgType() == message.AggregationFinalizedMessageType {
+		return s.aggregation.handleFinalized(msg)
 	}
-	if msg.GetMsgType() == message.FallbackCompletedMessageType {
-		return s.netting.handleFallbackCompleted(msg)
-	}
-	if msg.GetMsgType() == message.NettingExecutionMetricMessageType {
-		return s.netting.handleExecutionMetric(msg)
-	}
-	if msg.GetMsgType() == message.NettingBatchMetricMessageType {
-		return s.netting.handleBatchMetric(msg)
-	}
-	if msg.GetMsgType() == message.NettingBeaconMetricMessageType ||
-		msg.GetMsgType() == message.MatchRootFinalizedMessageType {
+
+	if msg.GetMsgType() == message.AggregationExecutionMetricMessageType {
 		return nil
 	}
+
+	if msg.GetMsgType() == message.AggregationAppliedMessageType {
+		return s.aggregation.handleApplied(msg)
+	}
+
+	if msg.GetMsgType() == message.AggregationBatchMetricMessageType {
+		return nil
+	}
+
+	if msg.GetMsgType() == message.AggregationBeaconMetricMessageType {
+		return nil
+	}
+
 	if msg.GetMsgType() != message.RelayBlockInfoMessageType {
 		slog.Info("unknown expected msg type", "type", msg.GetMsgType())
 		return nil
@@ -90,7 +94,7 @@ func (s *StaticRelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.Wrapp
 		return fmt.Errorf("decode relayBlockInfoMsg: %w", err)
 	}
 
-	if s.unsentTxNum <= 0 && s.netting.finished() &&
+	if s.unsentTxNum <= 0 && s.aggregation.finished() &&
 		len(bInfo.InnerShardTxs)+len(bInfo.Relay1Txs)+len(bInfo.Relay2Txs) == 0 {
 		s.sl.stopCnt++
 	} else if s.unsentTxNum <= 0 {
@@ -109,7 +113,8 @@ func (s *StaticRelayCommittee) readTxsAndSend(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to read txs: %w", err)
 	}
-	txs, err = s.netting.convert(txs)
+
+	txs, err = s.aggregation.convert(txs)
 	if err != nil {
 		return err
 	}

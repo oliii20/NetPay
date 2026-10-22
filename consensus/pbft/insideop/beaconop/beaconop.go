@@ -1,4 +1,4 @@
-// Package beaconop adapts netting batches to the shared PBFT state machine.
+// Package beaconop integrates receipt aggregation with the shared PBFT state machine.
 package beaconop
 
 import (
@@ -8,56 +8,60 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
+	"github.com/HuangLab-SYSU/block-emulator-x/config"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/batch"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/beacon"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/merkle"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/metrics"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/model"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/window"
+	paymentmodel "github.com/HuangLab-SYSU/block-emulator-x/pkg/core/payment"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/beacon"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/metrics"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network/rpcserver"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
 )
 
 var (
-	ErrInvalidBatchSender = errors.New("batch proposal is not from Solver")
-	ErrInvalidProposal    = errors.New("invalid Beacon PBFT proposal")
+	ErrInvalidReceiptSender = errors.New("finalized receipt is not from a shard leader")
+	ErrInvalidProposal      = errors.New("invalid Beacon aggregation proposal")
 )
 
 type Op struct {
-	conn           *network.ConnHandler
-	resolver       nodetopo.NodeMapper
-	store          *beacon.Store
-	validator      *beacon.Validator
-	shardCount     int64
-	nodeID         int64
-	queue          []model.BatchHeaderProposal
-	metrics        *metrics.Publisher
-	receivedAt     map[[32]byte]time.Time
-	validationTime map[[32]byte]time.Duration
+	conn             *network.ConnHandler
+	resolver         nodetopo.NodeMapper
+	store            *beacon.Store
+	validator        *beacon.Validator
+	shardCount       int64
+	nodeID           int64
+	cfg              config.AggregationCfg
+	manager          *window.Manager
+	bootstrap        map[int64][]model.FinalizedBlockReceipt
+	builder          batch.Builder
+	metrics          *metrics.Publisher
+	receivedAt       map[merkle.Hash]time.Time
+	receiptHandledAt map[merkle.Hash]time.Time
 }
 
 func New(
 	conn *network.ConnHandler,
 	resolver nodetopo.NodeMapper,
 	store *beacon.Store,
-	shardCount, nodeID int64,
-) *Op {
-	return NewWithValidationMode(conn, resolver, store, shardCount, nodeID, beacon.ValidationModeLight)
-}
-
-func NewWithValidationMode(
-	conn *network.ConnHandler,
-	resolver nodetopo.NodeMapper,
-	store *beacon.Store,
-	shardCount, nodeID int64,
-	validationMode beacon.ValidationMode,
+	shardCount, chainID, nodeID int64,
+	cfg config.AggregationCfg,
 ) *Op {
 	return &Op{
-		conn: conn, resolver: resolver, store: store, validator: beacon.NewValidatorWithMode(store, validationMode),
-		shardCount: shardCount, nodeID: nodeID,
-		metrics:    metrics.NewPublisher(false, nodeID, conn, resolver),
-		receivedAt: make(map[[32]byte]time.Time), validationTime: make(map[[32]byte]time.Duration),
+		conn: conn, resolver: resolver, store: store,
+		validator:  beacon.NewValidator(store, uint64(chainID), shardCount),
+		shardCount: shardCount, nodeID: nodeID, cfg: cfg,
+		bootstrap:        make(map[int64][]model.FinalizedBlockReceipt),
+		builder:          batch.Builder{CreditChunkSize: cfg.CreditChunkSize, BatchOnly: cfg.BatchOnly},
+		metrics:          metrics.NewPublisher(false, nodeID, conn, resolver),
+		receivedAt:       make(map[merkle.Hash]time.Time),
+		receiptHandledAt: make(map[merkle.Hash]time.Time),
 	}
 }
 
@@ -66,132 +70,380 @@ func (o *Op) EnableMetrics() {
 }
 
 func (o *Op) HandleMsgOutsideShard(_ context.Context, wrapped *rpcserver.WrappedMsg) error {
-	if wrapped.GetMsgType() != message.BatchProposalMessageType {
+	if wrapped.GetMsgType() != message.FinalizedBlockReceiptMessageType {
 		return fmt.Errorf("unknown Beacon message type: %s", wrapped.GetMsgType())
 	}
-	var msg message.BatchProposalMsg
+
+	handlerStarted := time.Now()
+	var msg message.FinalizedBlockReceiptMsg
 	if err := gob.NewDecoder(bytes.NewReader(wrapped.GetPayload())).Decode(&msg); err != nil {
-		return fmt.Errorf("decode BatchProposal: %w", err)
+		return fmt.Errorf("decode finalized receipt: %w", err)
 	}
+
 	if msg.NodeID != 0 {
-		return fmt.Errorf("%w: node %d", ErrInvalidBatchSender, msg.NodeID)
+		return fmt.Errorf("%w: node %d", ErrInvalidReceiptSender, msg.NodeID)
 	}
-	proposal := msg.Header
-	if proposal.Header.BatchID == (model.MatchRootBlockBody{}).BatchID {
-		proposal = model.BatchHeaderProposal{Header: msg.Proposal.Header}
+
+	if msg.Receipt.ShardID < 0 || msg.Receipt.ShardID >= o.shardCount {
+		return fmt.Errorf("invalid receipt shard: %d", msg.Receipt.ShardID)
 	}
-	for _, queued := range o.queue {
-		if queued.Header.BatchID == proposal.Header.BatchID {
-			return nil
+
+	if _, exists := o.receiptHandledAt[msg.Receipt.BlockHash]; !exists {
+		o.receiptHandledAt[msg.Receipt.BlockHash] = handlerStarted
+	}
+	if o.manager == nil {
+		o.bootstrap[msg.Receipt.ShardID] = append(o.bootstrap[msg.Receipt.ShardID], msg.Receipt.Clone())
+		if len(o.bootstrap) == int(o.shardCount) {
+			return o.initializeManager()
 		}
+
+		return nil
 	}
-	proposal.Header.Cuts = append([]model.ShardCut(nil), proposal.Header.Cuts...)
-	o.queue = append(o.queue, proposal)
-	o.receivedAt[proposal.Header.BatchID] = time.Now()
+
+	if _, err := o.manager.AddReceipt(msg.Receipt); err != nil {
+		return fmt.Errorf("add finalized receipt: %w", err)
+	}
 
 	return nil
 }
 
 func (o *Op) BuildProposal(context.Context) (*message.Proposal, error) {
-	if len(o.queue) == 0 {
+	if o.manager == nil {
 		return nil, nil
 	}
-	started := time.Now()
-	if err := o.validator.ValidateHeader(o.queue[0]); err != nil {
-		return nil, fmt.Errorf("validate queued Beacon batch: %w", err)
-	}
-	o.validationTime[o.queue[0].Header.BatchID] = time.Since(started)
 
-	return message.WrapNettingHeaderProposal(o.queue[0]), nil
+	o.manager.TryClose()
+
+	frozen, ok := o.manager.PeekFrozen()
+	if !ok {
+		return nil, nil
+	}
+
+	previous := merkle.Hash{}
+
+	if tip, found, err := o.store.Tip(); err != nil {
+		return nil, err
+	} else if found {
+		previous = tip.Body.BatchID
+	}
+
+	buildStarted := time.Now()
+	proposal, metric, err := o.builder.BuildMeasured(*frozen, previous)
+	if err != nil {
+		return nil, fmt.Errorf("build aggregation window %d: %w", frozen.WindowID, err)
+	}
+
+	metric.BuildTime = time.Since(buildStarted)
+	var ingressTotal, pendingTotal int64
+	var measuredCount int64
+	for _, receipt := range frozen.Receipts {
+		handledAt, found := o.receiptHandledAt[receipt.BlockHash]
+		if !found || receipt.CommitTime.IsZero() {
+			continue
+		}
+		for _, payment := range receipt.Payments {
+			ids, idErr := payment.LogicalIDs()
+			if idErr != nil {
+				return nil, idErr
+			}
+			count := int64(len(ids))
+			ingressTotal += handledAt.Sub(receipt.CommitTime).Nanoseconds() * count
+			pendingTotal += buildStarted.Sub(handledAt).Nanoseconds() * count
+			measuredCount += count
+		}
+	}
+	metric.ReceiptTimingCount = measuredCount
+	if measuredCount > 0 {
+		metric.SourceToHandlerMean = time.Duration(ingressTotal / measuredCount)
+		metric.HandlerToBuildMean = time.Duration(pendingTotal / measuredCount)
+	}
+	metric.WindowOpenedAt = frozen.OpenedAt
+	metric.WindowSealedAt = frozen.SealedAt
+	metric.BuildStartedAt = buildStarted
+	metric.FrozenQueueWait = buildStarted.Sub(frozen.SealedAt)
+	validationStarted := time.Now()
+	if err = o.validator.Validate(proposal); err != nil {
+		return nil, fmt.Errorf("validate local aggregation batch: %w", err)
+	}
+
+	metric.LocalValidationTime = time.Since(validationStarted)
+	metric.FrozenWindowQueueLength = o.manager.FrozenWindowCount()
+	metric.BatchProposalBytes, _ = encodedSize(message.WrapAggregationProposal(proposal))
+
+	metric.SidecarBytes, _ = encodedSize(proposal.Sidecar)
+	metric.ProposalReadyAt = time.Now()
+	if err = o.metrics.PublishBatch(context.Background(), metric); err != nil {
+		slog.Warn("publish aggregation batch metric failed", "err", err)
+	}
+
+	o.receivedAt[proposal.Header.BatchID] = time.Now()
+
+	return message.WrapAggregationProposal(proposal), nil
 }
 
 func (o *Op) ValidateProposal(_ context.Context, proposal *message.Proposal) error {
-	if proposal == nil || proposal.Block != nil || proposal.NettingHeader == nil {
+	if proposal == nil || proposal.Block != nil || proposal.AggregationBatch == nil {
 		return ErrInvalidProposal
 	}
-	if err := o.validator.ValidateHeader(*proposal.NettingHeader); err != nil {
-		return fmt.Errorf("validate Beacon proposal: %w", err)
+
+	if err := o.validator.Validate(*proposal.AggregationBatch); err != nil {
+		return fmt.Errorf("validate Beacon aggregation proposal: %w", err)
 	}
 
 	return nil
 }
 
-func (o *Op) ProposalCommitAndDeliver(
-	ctx context.Context,
-	isLeader bool,
-	proposal *message.Proposal,
-) error {
-	if proposal == nil || proposal.NettingHeader == nil {
+func (o *Op) ProposalCommitAndDeliver(ctx context.Context, isLeader bool, proposal *message.Proposal) error {
+	if proposal == nil || proposal.AggregationBatch == nil {
 		return ErrInvalidProposal
 	}
-	committed, err := o.store.CommitHeader(*proposal.NettingHeader, time.Now())
+
+	committed, err := o.store.Commit(*proposal.AggregationBatch, time.Now())
 	if err != nil {
-		return fmt.Errorf("commit MatchRoot block: %w", err)
+		return fmt.Errorf("commit aggregation block: %w", err)
 	}
-	o.removeQueued(committed.Body.BatchID)
+
+	if o.manager != nil {
+		if frozen, ok := o.manager.PeekFrozen(); ok && frozen.WindowID == committed.Body.WindowID {
+			if err = o.manager.AcknowledgeFrozen(frozen.WindowID); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, receipt := range proposal.AggregationBatch.Sidecar.Receipts {
+		delete(o.receiptHandledAt, receipt.BlockHash)
+	}
+
 	if !isLeader {
 		return nil
 	}
-	wrapped, err := message.WrapMsg(&message.MatchRootFinalizedMsg{NodeID: o.nodeID, Header: committed.Body})
+
+	paymentIDs := batchPaymentIDs(*proposal.AggregationBatch)
+
+	finalized, err := message.WrapMsg(&message.AggregationFinalizedMsg{
+		NodeID: o.nodeID, Header: committed.Body, PaymentIDs: paymentIDs, Settlements: paymentSettlements(*proposal.AggregationBatch),
+	})
 	if err != nil {
-		return fmt.Errorf("wrap finalized MatchRoot: %w", err)
-	}
-	if err = o.broadcastFinalized(ctx, wrapped); err != nil {
 		return err
 	}
-	if metric, metricErr := o.buildMetric(*proposal.NettingHeader, committed); metricErr != nil {
-		slog.WarnContext(ctx, "build Beacon metrics failed", "err", metricErr)
-	} else if metricErr = o.metrics.PublishBeacon(ctx, metric); metricErr != nil {
-		slog.WarnContext(ctx, "publish Beacon metrics failed", "err", metricErr)
+
+	dispatchStarted := time.Now()
+	// Only the measurement consumer needs the original transaction mapping.
+	supervisor, err := o.resolver.GetSupervisor()
+	if err != nil {
+		return fmt.Errorf("resolve aggregation supervisor: %w", err)
 	}
+	o.conn.SendMsg2Dest(ctx, supervisor, finalized)
+	supervisorDuration := time.Since(dispatchStarted)
+	headerOnly, err := message.WrapMsg(&message.AggregationFinalizedMsg{
+		NodeID: o.nodeID, Header: committed.Body,
+	})
+	if err != nil {
+		return err
+	}
+	headerStarted := time.Now()
+	if err = o.broadcastFinalized(ctx, headerOnly); err != nil {
+		return err
+	}
+
+	headerDuration := time.Since(headerStarted)
+	packageStarted := time.Now()
+	if err = o.sendAggregationPackages(ctx, *proposal.AggregationBatch); err != nil {
+		return err
+	}
+
+	packageDuration := time.Since(packageStarted)
+	metric, metricErr := o.buildMetric(*proposal.AggregationBatch, committed)
+	metric.SupervisorNotifyTime = supervisorDuration
+	metric.HeaderBroadcastTime = headerDuration
+	metric.PackageDispatchTime = packageDuration
+	metric.CommitDeliveryTime = time.Since(dispatchStarted)
+	if metricErr != nil {
+		slog.WarnContext(ctx, "build Beacon aggregation metric failed", "err", metricErr)
+	} else if metricErr = o.metrics.PublishBeacon(ctx, metric); metricErr != nil {
+		slog.WarnContext(ctx, "publish Beacon aggregation metric failed", "err", metricErr)
+	}
+
 	delete(o.receivedAt, committed.Body.BatchID)
-	delete(o.validationTime, committed.Body.BatchID)
+
+	return nil
+}
+
+func (o *Op) initializeManager() error {
+	checkpoints := make(map[int64]model.ShardCheckpoint, o.shardCount)
+
+	tip, hasTip, err := o.store.Tip()
+	if err != nil {
+		return fmt.Errorf("read Beacon tip while restoring receipt window: %w", err)
+	}
+
+	if hasTip {
+		for _, cut := range tip.Body.Cuts {
+			checkpoints[cut.ShardID] = model.ShardCheckpoint{Height: cut.EndHeight, BlockHash: cut.EndBlockHash}
+		}
+
+		if len(checkpoints) != int(o.shardCount) {
+			return fmt.Errorf("beacon tip has %d shard cuts, want %d", len(checkpoints), o.shardCount)
+		}
+	}
+
+	all := make([]model.FinalizedBlockReceipt, 0)
+
+	for shardID := range o.shardCount {
+		receipts := o.bootstrap[shardID]
+		sort.Slice(receipts, func(i, j int) bool { return receipts[i].Height < receipts[j].Height })
+
+		if len(receipts) == 0 {
+			return fmt.Errorf("invalid bootstrap receipt for shard %d", shardID)
+		}
+
+		if !hasTip {
+			if receipts[0].Height == 0 {
+				return fmt.Errorf("invalid bootstrap receipt height for shard %d", shardID)
+			}
+
+			checkpoints[shardID] = model.ShardCheckpoint{
+				Height:    receipts[0].Height - 1,
+				BlockHash: receipts[0].ParentHash,
+			}
+		}
+
+		all = append(all, receipts...)
+	}
+
+	initialWindowID := uint64(1)
+	if hasTip {
+		initialWindowID = tip.Body.WindowID + 1
+	}
+
+	manager, err := window.New(window.Config{
+		ShardCount: o.shardCount, BatchSize: o.cfg.BatchSize,
+		MaxWindowDuration: time.Duration(o.cfg.MaxWindowDurationMS) * time.Millisecond,
+		InitialWindowID:   initialWindowID,
+	}, nil, checkpoints)
+	if err != nil {
+		return err
+	}
+
+	o.manager = manager
+	o.bootstrap = make(map[int64][]model.FinalizedBlockReceipt)
+
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Height != all[j].Height {
+			return all[i].Height < all[j].Height
+		}
+
+		return all[i].ShardID < all[j].ShardID
+	})
+
+	for _, receipt := range all {
+		if _, err = o.manager.AddReceipt(receipt); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (o *Op) sendAggregationPackages(ctx context.Context, proposal model.AggregationBatch) error {
+	packages, err := batch.BuildAggregationPackages(proposal)
+	if err != nil {
+		return err
+	}
+
+	for _, pack := range packages {
+		leader, resolveErr := o.resolver.GetLeader(pack.Aggregation.ShardID)
+		if resolveErr != nil {
+			return resolveErr
+		}
+
+		wrapped, wrapErr := message.WrapMsg(&message.AggregationPackageMsg{NodeID: o.nodeID, Package: pack})
+		if wrapErr != nil {
+			return wrapErr
+		}
+
+		o.conn.SendMsg2Dest(ctx, leader, wrapped)
+	}
+
+	return nil
+}
+
+func (o *Op) broadcastFinalized(ctx context.Context, wrapped *rpcserver.WrappedMsg) error {
+	destinations := make([]nodetopo.NodeInfo, 0)
+
+	for shardID := range o.shardCount {
+		nodes, err := o.resolver.GetNodesInShard(shardID)
+		if err != nil {
+			return err
+		}
+
+		destinations = append(destinations, nodes...)
+	}
+
+	o.conn.GroupBroadcastMessage(ctx, destinations, wrapped)
 
 	return nil
 }
 
 func (o *Op) buildMetric(
-	proposal model.BatchHeaderProposal,
-	committed beacon.MatchRootBlock,
-) (model.NettingBeaconMetric, error) {
-	digest, err := message.WrapNettingHeaderProposal(proposal).Hash()
+	proposal model.AggregationBatch,
+	committed beacon.AggregationBlock,
+) (model.AggregationBeaconMetric, error) {
+	digest, err := message.WrapAggregationProposal(proposal).Hash()
 	if err != nil {
-		return model.NettingBeaconMetric{}, err
-	}
-	preprepareBytes, err := messageSize(&message.PreprepareMsg{P: *message.WrapNettingHeaderProposal(proposal), Digest: digest})
-	if err != nil {
-		return model.NettingBeaconMetric{}, err
-	}
-	prepareBytes, err := messageSize(&message.PrepareMsg{Digest: digest, ShardID: nodetopo.BeaconShardID})
-	if err != nil {
-		return model.NettingBeaconMetric{}, err
-	}
-	commitBytes, err := messageSize(&message.CommitMsg{Digest: digest, ShardID: nodetopo.BeaconShardID})
-	if err != nil {
-		return model.NettingBeaconMetric{}, err
-	}
-	nodes, err := o.resolver.GetNodesInShard(nodetopo.BeaconShardID)
-	if err != nil {
-		return model.NettingBeaconMetric{}, err
-	}
-	nodeCount := len(nodes)
-	blockBytes, err := encodedSize(committed)
-	if err != nil {
-		return model.NettingBeaconMetric{}, err
-	}
-	consensusLatency := time.Duration(0)
-	if received := o.receivedAt[committed.Body.BatchID]; !received.IsZero() {
-		consensusLatency = committed.CommitTime.Sub(received)
+		return model.AggregationBeaconMetric{}, err
 	}
 
-	return model.NettingBeaconMetric{
+	preprepareBytes, err := messageSize(
+		&message.PreprepareMsg{P: *message.WrapAggregationProposal(proposal), Digest: digest},
+	)
+	if err != nil {
+		return model.AggregationBeaconMetric{}, err
+	}
+
+	prepareBytes, _ := messageSize(&message.PrepareMsg{Digest: digest, ShardID: nodetopo.BeaconShardID})
+	commitBytes, _ := messageSize(&message.CommitMsg{Digest: digest, ShardID: nodetopo.BeaconShardID})
+
+	nodes, err := o.resolver.GetNodesInShard(nodetopo.BeaconShardID)
+	if err != nil {
+		return model.AggregationBeaconMetric{}, err
+	}
+
+	storageBytes, err := encodedSize(committed)
+	if err != nil {
+		return model.AggregationBeaconMetric{}, err
+	}
+
+	nodeCount := len(nodes)
+
+	latency := time.Duration(0)
+	if received := o.receivedAt[committed.Body.BatchID]; !received.IsZero() {
+		latency = committed.CommitTime.Sub(received)
+	}
+
+	return model.AggregationBeaconMetric{
 		BatchID: committed.Body.BatchID, WindowID: committed.Body.WindowID,
-		ValidationTime: o.validationTime[committed.Body.BatchID], BeaconConsensusLatency: consensusLatency,
-		PreprepareBytes:       preprepareBytes * nodeCount,
-		PrepareBytes:          prepareBytes * nodeCount * nodeCount,
-		CommitBytes:           commitBytes * nodeCount * nodeCount,
-		MatchRootStorageBytes: blockBytes, FinalizedAt: committed.CommitTime,
+		BeaconConsensusLatency: latency, PreprepareBytes: preprepareBytes * nodeCount,
+		PrepareBytes: prepareBytes * nodeCount * nodeCount, CommitBytes: commitBytes * nodeCount * nodeCount,
+		BatchStorageBytes: storageBytes, FinalizedAt: committed.CommitTime,
 	}, nil
+}
+
+func batchPaymentIDs(proposal model.AggregationBatch) []paymentmodel.ID {
+	ids := make([]paymentmodel.ID, 0)
+
+	for _, receipt := range proposal.Sidecar.Receipts {
+		for _, payment := range receipt.Payments {
+			if logicalIDs, err := payment.LogicalIDs(); err == nil {
+				ids = append(ids, logicalIDs...)
+			}
+		}
+	}
+
+	sort.Slice(ids, func(i, j int) bool { return bytes.Compare(ids[i][:], ids[j][:]) < 0 })
+
+	return ids
 }
 
 func messageSize(value any) (int, error) {
@@ -212,31 +464,47 @@ func encodedSize(value any) (int, error) {
 	return out.Len(), nil
 }
 
-func (o *Op) removeQueued(batchID [32]byte) {
-	for idx := range o.queue {
-		if o.queue[idx].Header.BatchID == batchID {
-			o.queue = append(o.queue[:idx], o.queue[idx+1:]...)
-			return
+// paymentSettlements maps each payment to its actual destination commit unit.
+func paymentSettlements(proposal model.AggregationBatch) []message.PaymentSettlement {
+	type key struct {
+		shard     int64
+		recipient [20]byte
+		asset     paymentmodel.AssetID
+		root      merkle.Hash
+	}
+	chunks := make(map[key]uint32)
+	for _, chunk := range proposal.Sidecar.ShardAggregations {
+		for _, credit := range chunk.Credits {
+			k := key{shard: chunk.ShardID, recipient: [20]byte(credit.Recipient), asset: credit.AssetID}
+			if chunk.BatchOnly {
+				k.root = credit.ReceiptRoot
+			}
+			chunks[k] = chunk.ChunkIndex
 		}
 	}
-}
-
-func (o *Op) broadcastFinalized(ctx context.Context, wrapped *rpcserver.WrappedMsg) error {
-	destinations := make([]nodetopo.NodeInfo, 0)
-	for shardID := range o.shardCount {
-		nodes, err := o.resolver.GetNodesInShard(shardID)
-		if err != nil {
-			return fmt.Errorf("resolve shard %d nodes: %w", shardID, err)
+	result := make([]message.PaymentSettlement, 0)
+	for _, receipt := range proposal.Sidecar.Receipts {
+		for _, payment := range receipt.Payments {
+			ids, err := payment.LogicalIDs()
+			if err != nil {
+				continue
+			} // Already validated by Beacon consensus.
+			k := key{shard: payment.DestinationShard, recipient: [20]byte(payment.Recipient), asset: payment.AssetID}
+			if proposal.Header.BatchOnly {
+				tree, err := merkle.Build(batch.CreditReceiptLeafDomain, []merkle.Leaf{{Key: ids[0][:], Payload: ids[0][:]}})
+				if err != nil {
+					continue
+				}
+				k.root = tree.Root()
+			}
+			chunk, ok := chunks[k]
+			if !ok {
+				continue
+			}
+			for _, id := range ids {
+				result = append(result, message.PaymentSettlement{PaymentID: id, ShardID: k.shard, ChunkIndex: chunk})
+			}
 		}
-		destinations = append(destinations, nodes...)
 	}
-	if solverNode, err := o.resolver.GetSolver(); err == nil {
-		destinations = append(destinations, solverNode)
-	}
-	if supervisorNode, err := o.resolver.GetSupervisor(); err == nil {
-		destinations = append(destinations, supervisorNode)
-	}
-	o.conn.GroupBroadcastMessage(ctx, destinations, wrapped)
-
-	return nil
+	return result
 }

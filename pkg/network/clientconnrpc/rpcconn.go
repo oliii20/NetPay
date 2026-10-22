@@ -111,6 +111,9 @@ func (r *RPCConn) SendMsg2Dest(ctx context.Context, dest nodetopo.NodeInfo, msg 
 func (r *RPCConn) Close() {
 	time.Sleep(connCloseTime)
 
+	r.connLock.Lock()
+	defer r.connLock.Unlock()
+
 	// close all clients in the pool
 	for _, c := range r.clientPool {
 		_ = c.conn.Close()
@@ -122,6 +125,7 @@ func (r *RPCConn) sendMessage(ctx context.Context, dest nodetopo.NodeInfo, msg *
 	if r.me == dest {
 		return r.add2LocalBuffer(msg)
 	}
+
 	if r.latency > 0 {
 		select {
 		case <-ctx.Done():
@@ -130,24 +134,12 @@ func (r *RPCConn) sendMessage(ctx context.Context, dest nodetopo.NodeInfo, msg *
 		}
 	}
 
-	r.connLock.Lock()
-	defer r.connLock.Unlock()
-
-	if _, ok := r.info2Host[dest]; !ok {
-		return fmt.Errorf("node %+v not exist in the p2p connection", dest)
-	}
-	// if there's no client, create one and reuse it.
-	if _, ok := r.clientPool[dest]; !ok {
-		conn, err := grpc.NewClient(r.info2Host[dest], grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(msgSizeLimit), grpc.MaxCallSendMsgSize(msgSizeLimit)))
-		if err != nil {
-			return fmt.Errorf("gRPC client fail to connect: %w", err)
-		}
-
-		r.clientPool[dest] = &clientConnection{conn, rpcserver.NewReplicaConnClient(conn)}
+	client, err := r.clientFor(dest)
+	if err != nil {
+		return err
 	}
 
-	_, err := r.clientPool[dest].client.HandleMessage(ctx, &rpcserver.HandleMessageRequest{
+	_, err = client.HandleMessage(ctx, &rpcserver.HandleMessageRequest{
 		Msg:  msg,
 		From: &rpcserver.NodePosition{ShardID: r.me.ShardID, NodeID: r.me.NodeID},
 		To:   &rpcserver.NodePosition{ShardID: dest.ShardID, NodeID: dest.NodeID},
@@ -157,6 +149,28 @@ func (r *RPCConn) sendMessage(ctx context.Context, dest nodetopo.NodeInfo, msg *
 	}
 
 	return nil
+}
+
+// clientFor protects pool access only. gRPC clients support concurrent calls.
+func (r *RPCConn) clientFor(dest nodetopo.NodeInfo) (rpcserver.ReplicaConnClient, error) {
+	r.connLock.Lock()
+	defer r.connLock.Unlock()
+
+	if _, ok := r.info2Host[dest]; !ok {
+		return nil, fmt.Errorf("node %+v not exist in the p2p connection", dest)
+	}
+	// if there's no client, create one and reuse it.
+	if _, ok := r.clientPool[dest]; !ok {
+		conn, err := grpc.NewClient(r.info2Host[dest], grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(msgSizeLimit), grpc.MaxCallSendMsgSize(msgSizeLimit)))
+		if err != nil {
+			return nil, fmt.Errorf("gRPC client fail to connect: %w", err)
+		}
+
+		r.clientPool[dest] = &clientConnection{conn, rpcserver.NewReplicaConnClient(conn)}
+	}
+
+	return r.clientPool[dest].client, nil
 }
 
 func (r *RPCConn) add2LocalBuffer(msg *rpcserver.WrappedMsg) error {

@@ -15,12 +15,12 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/consensus/pbft/insideop/txblockop"
 	"github.com/HuangLab-SYSU/block-emulator-x/consensus/pbft/migration"
 	"github.com/HuangLab-SYSU/block-emulator-x/consensus/pbft/outsideop"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/settlement"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/chain"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/txpool"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/csvwrite"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/settlement"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network/rpcserver"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
@@ -30,9 +30,12 @@ type messageHandleFunc func(context.Context, []byte) error
 
 const (
 	// executeInterval is the time interval between two running loops.
-	executeInterval    = 500 * time.Millisecond
-	blockRecordPathFmt = "shard=%d_node=%d/block_record.csv"
+	executeInterval     = 500 * time.Millisecond
+	blockRecordPathFmt  = "shard=%d_node=%d/block_record.csv"
+	txPoolRecordPathFmt = "shard=%d_node=%d/txpool_record.csv"
 )
+
+var txPoolRecordTitle = []string{"Timestamp", "ElapsedNs", "TxCount"}
 
 // Node is the node running the PBFT consensus.
 type Node struct {
@@ -40,8 +43,11 @@ type Node struct {
 	resolver nodetopo.NodeMapper  // resolver gives the information of all consensus nodes and shards.
 	pbftMeta *consensusMeta       // pbftMeta is the current consensus procedure
 
-	bc  *chain.Chain
-	csw *csvwrite.CSVSeqWriter
+	bc          *chain.Chain
+	csw         *csvwrite.CSVSeqWriter
+	txPool      txpool.TxPool
+	txPoolCSW   *csvwrite.CSVSeqWriter
+	txPoolStart time.Time
 
 	iop insideop.ShardInsideOp
 	omh outsideop.ShardOutsideMsgHandler
@@ -62,9 +68,11 @@ func NewSpecialPBFTNode(
 	if !nodetopo.IsSystemShardID(lp.ShardID) {
 		return nil, fmt.Errorf("special PBFT node requires a system shard, got %d", lp.ShardID)
 	}
+
 	if cfg.NodeNum <= 0 || lp.NodeID < 0 || lp.NodeID >= cfg.NodeNum {
 		return nil, fmt.Errorf("invalid nodeID=%d", lp.NodeID)
 	}
+
 	if conn == nil || r == nil || iop == nil || omh == nil {
 		return nil, fmt.Errorf("special PBFT node has a nil dependency")
 	}
@@ -131,6 +139,19 @@ func NewPBFTNode(
 
 	cleanups = append(cleanups, func() { _ = csw.Close() })
 
+	var txPoolCSW *csvwrite.CSVSeqWriter
+	if lp.NodeID == 0 {
+		txPoolCSW, err = csvwrite.NewCSVSeqWriter(
+			filepath.Join(cfg.BlockRecordDir, fmt.Sprintf(txPoolRecordPathFmt, lp.ShardID, lp.NodeID)),
+			txPoolRecordTitle,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create tx pool record writer: %w", err)
+		}
+
+		cleanups = append(cleanups, func() { _ = txPoolCSW.Close() })
+	}
+
 	var (
 		iop insideop.ShardInsideOp
 		omh outsideop.ShardOutsideMsgHandler
@@ -147,8 +168,9 @@ func NewPBFTNode(
 	default:
 		return nil, fmt.Errorf("invalid consensus type=%s", cfg.ConsensusType)
 	}
-	if cfg.NettingCfg.Enabled {
-		omh = outsideop.NewNettingOutsideOp(omh, settlement.NewInbox(lp.ShardID, bc, txp), txp)
+
+	if cfg.AggregationCfg.Enabled {
+		omh = outsideop.NewAggregationOutsideOp(omh, settlement.NewInbox(lp.ShardID, bc, txp))
 	}
 
 	return &Node{
@@ -156,8 +178,11 @@ func NewPBFTNode(
 		resolver: r,
 		pbftMeta: newConsensusMeta(cfg, lp),
 
-		bc:  bc,
-		csw: csw,
+		bc:          bc,
+		csw:         csw,
+		txPool:      txp,
+		txPoolCSW:   txPoolCSW,
+		txPoolStart: time.Now(),
 
 		iop: iop,
 		omh: omh,
@@ -189,6 +214,7 @@ func (n *Node) run() {
 		// Fetch messages from buffer to pool.
 		msgList := n.conn.DrainMsgBuffer()
 		preprepareMsgs := make([]*rpcserver.WrappedMsg, 0)
+
 		for _, msg := range msgList {
 			// A next-round preprepare may arrive in the same drain as the
 			// current round's commit quorum. Apply those commits first so the
@@ -197,6 +223,7 @@ func (n *Node) run() {
 				preprepareMsgs = append(preprepareMsgs, msg)
 				continue
 			}
+
 			err := n.handleMessage(ctx, msg)
 			if err != nil {
 				slog.ErrorContext(ctx, "handleMessage failed", "err", err)
@@ -204,11 +231,13 @@ func (n *Node) run() {
 		}
 
 		n.advanceConsensus(ctx)
+
 		for _, msg := range preprepareMsgs {
 			if err := n.handleMessage(ctx, msg); err != nil {
 				slog.ErrorContext(ctx, "handleMessage failed", "err", err)
 				continue
 			}
+
 			n.advanceConsensus(ctx)
 		}
 
@@ -225,6 +254,10 @@ func (n *Node) run() {
 				slog.ErrorContext(ctx, "catchupStart failed", "err", err)
 			}
 		}
+
+		if err := n.recordTxPool(time.Now()); err != nil {
+			slog.ErrorContext(ctx, "record tx pool failed", "err", err)
+		}
 	}
 
 	n.closeAll()
@@ -232,6 +265,7 @@ func (n *Node) run() {
 
 func (n *Node) advanceConsensus(ctx context.Context) {
 	n.pbftMeta.curateMsg()
+
 	if err := n.step2NextStage(ctx); err != nil {
 		slog.ErrorContext(ctx, "step2NextStage failed", "err", err)
 	}
@@ -591,14 +625,41 @@ func (n *Node) recordBlock(b *block.Block) error {
 	return nil
 }
 
+func (n *Node) recordTxPool(now time.Time) error {
+	if n.txPoolCSW == nil || n.txPool == nil {
+		return nil
+	}
+
+	line := []string{
+		now.UTC().Format(time.RFC3339Nano),
+		fmt.Sprintf("%d", now.Sub(n.txPoolStart).Nanoseconds()),
+		fmt.Sprintf("%d", n.txPool.Len()),
+	}
+	if err := n.txPoolCSW.WriteLine2CSV(line); err != nil {
+		return fmt.Errorf("write tx pool record: %w", err)
+	}
+
+	return nil
+}
+
 func (n *Node) closeAll() {
 	slog.Info("consensus node is closing")
 
 	n.conn.Close()
+
 	if n.bc != nil {
 		_ = n.bc.Close()
 	}
+
 	if n.csw != nil {
-		_ = n.csw.Close()
+		if err := n.csw.Close(); err != nil {
+			slog.Error("close block record writer failed", "err", err)
+		}
+	}
+
+	if n.txPoolCSW != nil {
+		if err := n.txPoolCSW.Close(); err != nil {
+			slog.Error("close tx pool record writer failed", "err", err)
+		}
 	}
 }

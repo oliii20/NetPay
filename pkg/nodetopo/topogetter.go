@@ -6,13 +6,12 @@ import (
 )
 
 const (
-	SolverShardID     int64 = 0x7ffffffd
 	BeaconShardID     int64 = 0x7ffffffe
 	SupervisorShardID int64 = 0x7fffffff
 )
 
 func IsSystemShardID(shardID int64) bool {
-	return shardID == SolverShardID || shardID == BeaconShardID || shardID == SupervisorShardID
+	return shardID == BeaconShardID || shardID == SupervisorShardID
 }
 
 type TopoGetter struct {
@@ -62,17 +61,6 @@ func (t *TopoGetter) GetSupervisor() (NodeInfo, error) {
 	}
 
 	return NodeInfo{}, fmt.Errorf("no supervisor found")
-}
-
-func (t *TopoGetter) GetSolver() (NodeInfo, error) {
-	t.mux.Lock()
-	defer t.mux.Unlock()
-
-	if solver, ok := t.leaders[SolverShardID]; ok {
-		return solver, nil
-	}
-
-	return NodeInfo{}, fmt.Errorf("no solver found")
 }
 
 func (t *TopoGetter) GetNodesInShard(shardID int64) ([]NodeInfo, error) {

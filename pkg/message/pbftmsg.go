@@ -9,9 +9,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/rlp"
 
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 )
 
 const (
@@ -27,9 +27,8 @@ const (
 )
 
 type Proposal struct {
-	Block         *block.Block
-	NettingBatch  *model.BatchProposal
-	NettingHeader *model.BatchHeaderProposal
+	Block            *block.Block
+	AggregationBatch *model.AggregationBatch
 }
 
 func (p *Proposal) Hash() ([]byte, error) {
@@ -37,33 +36,30 @@ func (p *Proposal) Hash() ([]byte, error) {
 	if p.Block != nil {
 		payloads++
 	}
-	if p.NettingBatch != nil {
+
+	if p.AggregationBatch != nil {
 		payloads++
 	}
-	if p.NettingHeader != nil {
-		payloads++
-	}
+
 	if payloads != 1 {
 		return nil, errors.New("proposal must contain exactly one payload")
 	}
+
 	var encoded []byte
+
 	if p.Block != nil {
 		var err error
+
 		encoded, err = rlp.EncodeToBytes(struct{ Block *block.Block }{Block: p.Block})
 		if err != nil {
 			return nil, fmt.Errorf("encode block proposal: %w", err)
 		}
-	} else if p.NettingBatch != nil {
+	} else if p.AggregationBatch != nil {
 		var out bytes.Buffer
-		if err := gob.NewEncoder(&out).Encode(p.NettingBatch); err != nil {
-			return nil, fmt.Errorf("encode netting proposal: %w", err)
+		if err := gob.NewEncoder(&out).Encode(p.AggregationBatch); err != nil {
+			return nil, fmt.Errorf("encode aggregation proposal: %w", err)
 		}
-		encoded = out.Bytes()
-	} else {
-		var out bytes.Buffer
-		if err := gob.NewEncoder(&out).Encode(p.NettingHeader); err != nil {
-			return nil, fmt.Errorf("encode netting header proposal: %w", err)
-		}
+
 		encoded = out.Bytes()
 	}
 

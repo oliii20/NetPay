@@ -7,8 +7,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
 
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/outbox"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/registry"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/utils"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/vm"
 )
@@ -24,9 +24,10 @@ const (
 func readStateFromVMExecutor(address account.Address, e *vm.Executor, location uint64) *account.State {
 	addr := common.Address(address)
 	if !e.StateDB().Exist(addr) {
-		if address == registry.EscrowAccountAddress || address == registry.IntentRegistryAddress {
+		if address == outbox.SystemAccountAddress {
 			return &account.State{Address: address, Balance: new(big.Int), ShardLocation: location}
 		}
+
 		return account.NewState(address, location)
 	}
 

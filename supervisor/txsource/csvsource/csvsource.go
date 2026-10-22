@@ -100,7 +100,7 @@ func line2Tx(line []string, count int64, excludeContractTxs bool) (*transaction.
 	fromIsContract := line[6] == "1"
 	toIsContract := line[7] == "1"
 
-	isContractRelated := (!hasToAddr && hasToCreate) || fromIsContract || toIsContract
+	isContractRelated := (!hasToAddr && hasToCreate) || fromIsContract || toIsContract || hasCallData
 
 	if isContractRelated && excludeContractTxs {
 		return nil, fmt.Errorf("contract transactions have been filtered")

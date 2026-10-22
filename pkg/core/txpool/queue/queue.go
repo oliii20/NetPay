@@ -11,7 +11,7 @@ import (
 
 type packTxFunc func(q []transaction.Transaction, n int) ([]transaction.Transaction, []transaction.Transaction, error)
 
-const maxHeavyNettingTxsPerNumBlock = 512
+const maxHeavyAggregationTxsPerNumBlock = 512
 
 type TxPool struct {
 	queue []transaction.Transaction
@@ -69,6 +69,13 @@ func (t *TxPool) PackTxs(limit int) ([]transaction.Transaction, error) {
 	return packed, nil
 }
 
+func (t *TxPool) Len() int {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	return len(t.queue)
+}
+
 func (t *TxPool) GetTxListSize(txs []transaction.Transaction) (int, error) {
 	switch t.cfg.Type {
 	case config.TxPoolByteType:
@@ -90,38 +97,48 @@ func packTxsByGivenNum(
 
 	selected := make([]bool, len(q))
 	packed := make([]transaction.Transaction, 0, min(n, len(q)))
-	heavyNettingLimit := min(n, maxHeavyNettingTxsPerNumBlock)
-	heavyNettingCount := 0
+	heavyAggregationLimit := min(n, maxHeavyAggregationTxsPerNumBlock)
+	heavyAggregationCount := 0
+
 	for idx := range q {
 		if len(packed) == n {
 			break
 		}
+
 		if !isPriorityTx(q[idx]) {
 			continue
 		}
-		if isHeavyNettingTx(q[idx]) && heavyNettingCount == heavyNettingLimit {
+
+		if isHeavyAggregationTx(q[idx]) && heavyAggregationCount == heavyAggregationLimit {
 			continue
 		}
+
 		packed = append(packed, q[idx])
+
 		selected[idx] = true
-		if isHeavyNettingTx(q[idx]) {
-			heavyNettingCount++
+		if isHeavyAggregationTx(q[idx]) {
+			heavyAggregationCount++
 		}
 	}
+
 	for idx := range q {
 		if len(packed) == n {
 			break
 		}
+
 		if selected[idx] {
 			continue
 		}
-		if isHeavyNettingTx(q[idx]) && heavyNettingCount == heavyNettingLimit {
+
+		if isHeavyAggregationTx(q[idx]) && heavyAggregationCount == heavyAggregationLimit {
 			continue
 		}
+
 		packed = append(packed, q[idx])
+
 		selected[idx] = true
-		if isHeavyNettingTx(q[idx]) {
-			heavyNettingCount++
+		if isHeavyAggregationTx(q[idx]) {
+			heavyAggregationCount++
 		}
 	}
 
@@ -139,32 +156,40 @@ func packTxsByGivenBytes(
 	selected := make([]bool, len(q))
 	packed := make([]transaction.Transaction, 0)
 	remainingBytes := n
+
 	for idx := range q {
 		if !isPriorityTx(q[idx]) {
 			continue
 		}
+
 		nextRemaining, ok, err := packIfFits(q[idx], remainingBytes)
 		if err != nil {
 			return nil, nil, err
 		}
+
 		if !ok {
 			continue
 		}
+
 		packed = append(packed, q[idx])
 		selected[idx] = true
 		remainingBytes = nextRemaining
 	}
+
 	for idx := range q {
 		if selected[idx] {
 			continue
 		}
+
 		nextRemaining, ok, err := packIfFits(q[idx], remainingBytes)
 		if err != nil {
 			return nil, nil, err
 		}
+
 		if !ok {
 			continue
 		}
+
 		packed = append(packed, q[idx])
 		selected[idx] = true
 		remainingBytes = nextRemaining
@@ -178,6 +203,7 @@ func packIfFits(tx transaction.Transaction, remainingBytes int) (int, bool, erro
 	if err != nil {
 		return remainingBytes, false, err
 	}
+
 	size := len(b)
 	if size > remainingBytes {
 		return remainingBytes, false, nil
@@ -192,6 +218,7 @@ func remainingTxs(q []transaction.Transaction, selected []bool) []transaction.Tr
 		if selected[idx] {
 			continue
 		}
+
 		remaining = append(remaining, q[idx])
 	}
 
@@ -200,16 +227,16 @@ func remainingTxs(q []transaction.Transaction, selected []bool) []transaction.Tr
 
 func isPriorityTx(tx transaction.Transaction) bool {
 	switch tx.TxType() {
-	case transaction.SettlementTxType, transaction.ReservedFallbackTxType, transaction.FallbackCompletedTxType:
+	case transaction.AggregationSettlementTxType:
 		return true
 	default:
 		return false
 	}
 }
 
-func isHeavyNettingTx(tx transaction.Transaction) bool {
+func isHeavyAggregationTx(tx transaction.Transaction) bool {
 	switch tx.TxType() {
-	case transaction.SettlementTxType, transaction.ReservedFallbackTxType:
+	case transaction.AggregationSettlementTxType:
 		return true
 	default:
 		return false

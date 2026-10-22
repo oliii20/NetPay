@@ -6,111 +6,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var expectedSystemCfg = SystemCfg{
-	ShardNum:       4,
-	NodeNum:        4,
-	ConsensusType:  StaticRelayConsensus,
-	BlockSizeLimit: 2000,
-	LogCfg: LogCfg{
-		LogDir:   "./exp_test/",
-		LogLevel: "debug",
-	},
-}
+func TestLoadAggregationConfig(t *testing.T) {
+	t.Parallel()
 
-var expectedCfg = Config{
-	GlobalSys: expectedSystemCfg,
-	NettingCfg: NettingCfg{
-		Enabled:              true,
-		MetricsEnabled:       true,
-		BatchSize:            0,
-		MaxWindowDurationMS:  2000,
-		SolverTickIntervalMS: 100,
-		MatcherMode:          "bilateral_max_full_ctx",
-		BeaconValidationMode: "light",
-		BatchStorePath:       "./exp_test/netting/solver.db",
-		BeaconStorePath:      "./exp_test/netting/beacon.db",
-	},
-	ConsensusNodeCfg: ConsensusNodeCfg{
-		BlockchainCfg: BlockchainCfg{
-			SystemCfg: expectedSystemCfg,
-			BloomFilterCfg: BloomFilterCfg{
-				BitsetLen:      4096,
-				FilterHashFunc: []string{"sha256", "sha512", "sha1"},
-			},
-			StorageCfg: StorageCfg{
-				BlockStorageType: "bolt",
-				TrieStorageType:  "eth_level_db",
-				BoltCfg: BoltCfg{
-					FilePathDir: "./exp_test/boltdb/",
-				},
-				EthStorageCfg: EthStorageCfg{
-					IsMemoryDB:       false,
-					LevelFilePathDir: "./exp_test/trie_db/",
-					OldStateRoot:     "",
-				},
-			},
-		},
-		TxPoolCfg: TxPoolCfg{
-			Type: "number",
-		},
-		NettingCfg: NettingCfg{
-			Enabled:              true,
-			MetricsEnabled:       true,
-			BatchSize:            0,
-			MaxWindowDurationMS:  2000,
-			SolverTickIntervalMS: 100,
-			MatcherMode:          "bilateral_max_full_ctx",
-			BeaconValidationMode: "light",
-			BatchStorePath:       "./exp_test/netting/solver.db",
-			BeaconStorePath:      "./exp_test/netting/beacon.db",
-		},
-		BlockInterval:  5000,
-		BlockRecordDir: "./exp_test/block_record/",
-	},
-	SupervisorCfg: SupervisorCfg{
-		NettingCfg: NettingCfg{
-			Enabled:              true,
-			MetricsEnabled:       true,
-			BatchSize:            0,
-			MaxWindowDurationMS:  2000,
-			SolverTickIntervalMS: 100,
-			MatcherMode:          "bilateral_max_full_ctx",
-			BeaconValidationMode: "light",
-			BatchStorePath:       "./exp_test/netting/solver.db",
-			BeaconStorePath:      "./exp_test/netting/beacon.db",
-		},
-		TxNumber:         100000,
-		TxInjectionSpeed: 10000,
-		ResultOutputDir:  "./exp_test/results/",
-		EpochDuration:    50.0,
-		TxSourceCfg: TxSourceCfg{
-			TxSourceType:       "random_source",
-			TxSourceFile:       "",
-			ExcludeContractTxs: true,
-		},
-		BrokerModuleCfg: BrokerModuleCfg{
-			BrokerFilePath: "./pkg/broker/broker",
-			BrokerNum:      50,
-		},
-		SystemCfg: expectedSystemCfg,
-	},
-	NetworkCfg: NetworkCfg{
-		Bandwidth:         1000000,
-		Latency:           0,
-		CommunicationMode: "libp2p",
-		LibP2PConnCfg: LibP2PConnCfg{
-			BootstrapKeyFp: "./pkg/network/connlibp2p/bootstrap.key",
-			BootstrapPeer:  "12D3KooWR6siPMZ2sMFKbgwaJFwQfnKczuPZnxHfyy1dHTzZSAUY",
-			BootstrapIP:    "127.0.0.1",
-			BootstrapPort:  12345,
-		},
-	},
-}
-
-func TestLoadConfig(t *testing.T) {
-	_, err := LoadConfig("../config")
-	require.Error(t, err)
-	cfg, err := LoadConfig("./config_test.yaml")
+	cfg, err := LoadConfig("config_test.yaml")
 	require.NoError(t, err)
-	require.Equal(t, expectedCfg, *cfg)
+	require.True(t, cfg.AggregationCfg.Enabled)
+	require.True(t, cfg.SourceAggregateAbstracts)
+	require.Equal(t, 100, cfg.BatchSize)
+	require.Equal(t, 50, cfg.CreditChunkSize)
+	require.Equal(t, "./exp_test/aggregation/beacon.db", cfg.BeaconStorePath)
+	require.Equal(t, cfg.AggregationCfg, cfg.ConsensusNodeCfg.AggregationCfg)
+	require.Equal(t, cfg.AggregationCfg, cfg.SupervisorCfg.AggregationCfg)
+}
+
+func TestValidateAggregationConfigRejectsDynamicSharding(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		GlobalSys: SystemCfg{ShardNum: 4, ConsensusType: CLPARelayConsensus},
+		AggregationCfg: AggregationCfg{
+			Enabled: true, MaxWindowDurationMS: 1000, BeaconStorePath: "beacon.db",
+		},
+	}
+	require.ErrorContains(t, validateAggregationConfig(cfg), "static_relay or static_broker")
 }

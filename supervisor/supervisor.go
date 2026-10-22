@@ -14,14 +14,14 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/committee"
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure"
+	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure/aggregationstats"
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure/brokerstats"
-	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure/nettingstats"
 	"github.com/HuangLab-SYSU/block-emulator-x/supervisor/measure/relaystats"
 )
 
 const (
-	wmBufferSize               = 1 << 16
-	nettingShutdownGracePeriod = 2 * time.Second
+	wmBufferSize                   = 1 << 16
+	aggregationShutdownGracePeriod = 2 * time.Second
 )
 
 type Supervisor struct {
@@ -88,8 +88,9 @@ func NewSupervisor(conn *network.ConnHandler, r nodetopo.NodeMapper, cfg config.
 	default:
 		return nil, fmt.Errorf("undefined consensus type: %s", cfg.ConsensusType)
 	}
-	if cfg.NettingCfg.Enabled && cfg.NettingCfg.MetricsEnabled {
-		ms = measure.NewRouter(ms, nettingstats.New(cfg.ResultOutputDir))
+
+	if cfg.AggregationCfg.Enabled && cfg.AggregationCfg.MetricsEnabled {
+		ms = measure.NewRouter(ms, aggregationstats.New(cfg.ResultOutputDir))
 	}
 
 	// create and valid cfg output path
@@ -172,22 +173,20 @@ func (s *Supervisor) Start() error {
 
 		normalNodes = append(normalNodes, ls...)
 	}
+
 	s.conn.GroupBroadcastMessage(context.Background(), normalNodes, wMsg)
-	if s.cfg.NettingCfg.Enabled {
-		// Keep Solver and Beacon alive while ordinary shards consume their stop
-		// message and finish any receipt sends already in flight.
-		time.Sleep(nettingShutdownGracePeriod)
+
+	if s.cfg.AggregationCfg.Enabled {
+		// Keep Beacon alive while ordinary shards consume their stop message and
+		// finish any receipt sends already in flight.
+		time.Sleep(aggregationShutdownGracePeriod)
+
 		beaconNodes, resolveErr := s.r.GetNodesInShard(nodetopo.BeaconShardID)
 		if resolveErr != nil {
 			return fmt.Errorf("get Beacon nodes when trying to send stop: %w", resolveErr)
 		}
-		systemNodes := append([]nodetopo.NodeInfo(nil), beaconNodes...)
-		solverNode, resolveErr := s.r.GetSolver()
-		if resolveErr != nil {
-			return fmt.Errorf("get Solver when trying to send stop: %w", resolveErr)
-		}
-		systemNodes = append(systemNodes, solverNode)
-		s.conn.GroupBroadcastMessage(context.Background(), systemNodes, wMsg)
+
+		s.conn.GroupBroadcastMessage(context.Background(), beaconNodes, wMsg)
 	}
 
 	slog.Info("supervisor is closing")

@@ -112,29 +112,19 @@ consensus_node:
   block_record_dir: "./exp/block_record/"
   ### -----------------------------------------------------------------------------------
 
-netting:
-  # Netting nodes and receipt publication are disabled for legacy experiments.
+aggregation:
+  # Beacon-coordinated cross-shard aggregation is opt-in for legacy experiments.
   enabled: false
   metrics_enabled: true
+  source_aggregate_abstracts: false
+  # Zero disables payment-count-based sealing; windows close by duration only.
   batch_size: 0
-  settlement_chunk_size: 0
+  credit_chunk_size: 512
   max_window_duration_ms: 2000
-  solver_tick_interval_ms: 100
-  matcher_mode: "bilateral_max_full_ctx"
-  beacon_validation_mode: "light"
-  batch_store_path: "./exp/netting/solver.db"
-  beacon_store_path: "./exp/netting/beacon.db"
-  # The 24-shard pre-analysis ranks every undirected shard pair by matched
-  # intent rate. Only pairs at or above 0.8 are converted to netting intents;
-  # all other transactions keep using the configured relay/broker path.
-  pair_rate_file: "./pre_exp_scipts/outputs/exp1_real_workload_shard24/pair_matching_rate_ranking.csv"
-  pair_rate_threshold: 0.8
-  # Optional: first netting window ID where new CTX conversion stops.
-  # Set to 8 to make newly injected cross-shard transactions use relay once W8 starts.
-  max_netting_window: 0
-  # Optional: supervisor-side injection duration for netting conversion.
-  # Set to 7000 to make newly injected cross-shard transactions use relay after 7s.
-  max_netting_injection_duration_ms: 7000
+  beacon_store_path: "./exp/aggregation/beacon.db"
+  # Optional workload bounds; zero disables the corresponding limit.
+  max_aggregation_window: 0
+  max_aggregation_injection_duration_ms: 0
 
 supervisor:
   ### -----------------------------------------------------------------------------------

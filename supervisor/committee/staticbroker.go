@@ -31,7 +31,7 @@ type StaticBrokerCommittee struct {
 	txSource    txsource.TxSource // txSource brings the txs into the blockchain system.
 	sl          stopLogic         // sl is the logic of stop.
 	unsentTxNum int64
-	netting     *nettingWorkload
+	aggregation *aggregationWorkload
 
 	cfg config.SupervisorCfg
 
@@ -70,9 +70,9 @@ func NewStaticBrokerCommittee(
 		}
 	}
 
-	netting, err := newNettingWorkload(cfg.NettingCfg, cfg.ShardNum, cfg.ChainID)
+	aggregation, err := newAggregationWorkload(cfg.AggregationCfg, cfg.ShardNum, cfg.ChainID)
 	if err != nil {
-		return nil, fmt.Errorf("initialize netting workload: %w", err)
+		return nil, fmt.Errorf("initialize aggregation workload: %w", err)
 	}
 
 	return &StaticBrokerCommittee{
@@ -82,7 +82,7 @@ func NewStaticBrokerCommittee(
 		txSource:          ts,
 		sl:                stopLogic{stopThreshold: cfg.ShardNum * stopThresholdPerShard, stopCnt: 0},
 		unsentTxNum:       cfg.TxNumber,
-		netting:           netting,
+		aggregation:       aggregation,
 		cfg:               cfg,
 		brokerBalances:    brokerBalances,
 		pendingDeductions: pendingDeductions,
@@ -98,22 +98,26 @@ func (s *StaticBrokerCommittee) SendTxsAndConsensus(ctx context.Context) error {
 }
 
 func (s *StaticBrokerCommittee) HandleMsg(ctx context.Context, msg *rpcserver.WrappedMsg) error {
-	if msg.GetMsgType() == message.NettingProgressMessageType {
-		return s.netting.handleProgress(msg)
+	if msg.GetMsgType() == message.AggregationFinalizedMessageType {
+		return s.aggregation.handleFinalized(msg)
 	}
-	if msg.GetMsgType() == message.FallbackCompletedMessageType {
-		return s.netting.handleFallbackCompleted(msg)
-	}
-	if msg.GetMsgType() == message.NettingExecutionMetricMessageType {
-		return s.netting.handleExecutionMetric(msg)
-	}
-	if msg.GetMsgType() == message.NettingBatchMetricMessageType {
-		return s.netting.handleBatchMetric(msg)
-	}
-	if msg.GetMsgType() == message.NettingBeaconMetricMessageType ||
-		msg.GetMsgType() == message.MatchRootFinalizedMessageType {
+
+	if msg.GetMsgType() == message.AggregationExecutionMetricMessageType {
 		return nil
 	}
+
+	if msg.GetMsgType() == message.AggregationAppliedMessageType {
+		return s.aggregation.handleApplied(msg)
+	}
+
+	if msg.GetMsgType() == message.AggregationBatchMetricMessageType {
+		return nil
+	}
+
+	if msg.GetMsgType() == message.AggregationBeaconMetricMessageType {
+		return nil
+	}
+
 	if msg.GetMsgType() != message.BrokerBlockInfoMessageType {
 		slog.Info("unknown expected msg type", "type", msg.GetMsgType())
 		return nil
@@ -126,7 +130,7 @@ func (s *StaticBrokerCommittee) HandleMsg(ctx context.Context, msg *rpcserver.Wr
 
 	// Only count empty blocks toward stop after all txs are injected.
 	// Otherwise startup empty blocks cause the supervisor to exit before injection.
-	if s.unsentTxNum <= 0 && s.netting.finished() && brokerBlockTxCount(&bInfo) == 0 {
+	if s.unsentTxNum <= 0 && s.aggregation.finished() && brokerBlockTxCount(&bInfo) == 0 {
 		s.sl.stopCnt++
 	} else if s.unsentTxNum <= 0 {
 		s.sl.stopCnt = 0 // reset 0 if there are transactions in a block
@@ -173,17 +177,20 @@ func (s *StaticBrokerCommittee) readTxsAndSend(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to read txs: %w", err)
 	}
-	if s.netting.enabled {
-		converted, convertErr := s.netting.convert(txs)
+
+	if s.aggregation.enabled {
+		converted, convertErr := s.aggregation.convert(txs)
 		if convertErr != nil {
 			return convertErr
 		}
+
 		shardTxs := packShardTxs(converted, s.cfg.ShardNum, func(tx transaction.Transaction) int64 {
 			return partition.DefaultAccountLoc(tx.Sender, s.cfg.ShardNum)
 		})
 		if err = message.SendWrappedTxs2Shards(ctx, shardTxs, s.conn, s.r); err != nil {
-			return fmt.Errorf("failed to send netting txs to shards: %w", err)
+			return fmt.Errorf("failed to send aggregation txs to shards: %w", err)
 		}
+
 		s.unsentTxNum -= int64(len(txs))
 
 		return nil

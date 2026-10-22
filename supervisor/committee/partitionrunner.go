@@ -68,6 +68,7 @@ func (p *partitionRunner) checkEpochSyncAndMarkAt(now time.Time) bool {
 
 	// the epoch is synced, record the last run time
 	p.epochSynced = true
+
 	p.lastRunTime = now
 	if err := p.recordCLPASyncComplete(now); err != nil {
 		slog.Error("failed to record CLPA sync metric", "err", err)
@@ -147,7 +148,7 @@ func (m clpaRepartitionMetric) csvLine() []string {
 	}
 }
 
-func durationBetween(start time.Time, end time.Time) time.Duration {
+func durationBetween(start, end time.Time) time.Duration {
 	if start.IsZero() || end.IsZero() || end.Before(start) {
 		return 0
 	}

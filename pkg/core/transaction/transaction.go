@@ -1,5 +1,4 @@
-// Definition of transaction
-
+// Package transaction defines user and protocol transactions.
 package transaction
 
 import (
@@ -13,9 +12,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/rlp"
 
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/intent"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
+	paymentmodel "github.com/HuangLab-SYSU/block-emulator-x/pkg/core/payment"
 )
 
 const (
@@ -24,10 +23,8 @@ const (
 	BrokerTxType
 	CreateContractTxType
 	CallContractTxType
-	IntentSubmitTxType
-	SettlementTxType
-	ReservedFallbackTxType
-	FallbackCompletedTxType
+	CrossShardPaymentTxType
+	AggregationSettlementTxType
 )
 
 const (
@@ -53,14 +50,12 @@ type Transaction struct {
 	Signature   Signature
 	CreateTime  time.Time
 	Data        []byte
+	GasLimit    uint64
 
-	GasLimit uint64
-
-	RelayTxOpt  // the optional setting only for relay transactions.
-	BrokerTxOpt // the optional setting only for broker transactions.
-	IntentTxOpt // the optional setting only for payment-intent transactions.
-	SettlementTxOpt
-	FallbackTxOpt
+	RelayTxOpt
+	BrokerTxOpt
+	CrossShardPaymentTxOpt
+	AggregationSettlementTxOpt
 }
 
 type RelayTxOpt struct {
@@ -69,111 +64,68 @@ type RelayTxOpt struct {
 }
 
 type BrokerTxOpt struct {
-	BrokerStage               uint // label that this is a sigma_1 tx or a sigma_2 tx.
+	BrokerStage               uint
 	Broker                    account.Address
-	BOriginalHash             []byte // the hash of raw message
+	BOriginalHash             []byte
 	OriginalTxCreateTime      time.Time
 	NonceBroker               uint64
 	HeightLock, HeightCurrent uint64
 }
 
-type IntentTxOpt struct {
-	Intent *intent.PaymentIntent `rlp:"nil"`
+type CrossShardPaymentTxOpt struct {
+	Payment *paymentmodel.CrossShardPayment `rlp:"nil"`
 }
 
-type SettlementTxOpt struct {
-	Settlement *model.SettlementPackage `rlp:"nil"`
-}
-
-type FallbackTxOpt struct {
-	ReservedFallback  *model.ReservedFallback `rlp:"nil"`
-	FallbackCompleted *model.FallbackKey      `rlp:"nil"`
+type AggregationSettlementTxOpt struct {
+	Aggregation *model.AggregationPackage `rlp:"nil"`
 }
 
 func NewTransaction(
 	sender, recipient account.Address,
 	value, priorityFee *big.Int,
-	nonce uint64, proposeTime time.Time,
+	nonce uint64,
+	proposeTime time.Time,
 ) *Transaction {
-	tx := &Transaction{
-		Sender:      sender,
-		Recipient:   recipient,
-		Value:       value,
-		PriorityFee: priorityFee,
-		Nonce:       nonce,
-		CreateTime:  proposeTime,
-		GasLimit:    defaultGasLimit,
+	return &Transaction{
+		Sender: sender, Recipient: recipient, Value: value, PriorityFee: priorityFee,
+		Nonce: nonce, CreateTime: proposeTime, GasLimit: defaultGasLimit,
 	}
-
-	return tx
 }
 
-func NewIntentTransaction(payment intent.PaymentIntent, proposeTime time.Time) *Transaction {
+func NewCrossShardPaymentTransaction(payment paymentmodel.CrossShardPayment, proposeTime time.Time) *Transaction {
 	cloned := payment.Clone()
+
 	var value *big.Int
 	if cloned.Amount != nil {
 		value = new(big.Int).Set(cloned.Amount)
 	}
 
 	return &Transaction{
-		Sender:      cloned.Sender,
-		Recipient:   cloned.Recipient,
-		Value:       value,
-		PriorityFee: new(big.Int),
-		Nonce:       cloned.Nonce,
-		CreateTime:  proposeTime,
-		GasLimit:    defaultGasLimit,
-		IntentTxOpt: IntentTxOpt{Intent: &cloned},
-	}
-}
-
-func NewSettlementTransaction(settlement model.SettlementPackage, proposeTime time.Time) *Transaction {
-	cloned := settlement.Clone()
-
-	return &Transaction{
-		Value:           new(big.Int),
-		PriorityFee:     new(big.Int),
-		CreateTime:      proposeTime,
-		GasLimit:        defaultGasLimit,
-		SettlementTxOpt: SettlementTxOpt{Settlement: &cloned},
-	}
-}
-
-func NewReservedFallbackTransaction(item model.ReservedFallback, proposeTime time.Time) *Transaction {
-	cloned := item.Clone()
-	value := new(big.Int)
-	if cloned.Amount != nil {
-		value.Set(cloned.Amount)
-	}
-
-	return &Transaction{
 		Sender: cloned.Sender, Recipient: cloned.Recipient, Value: value,
-		PriorityFee: new(big.Int), CreateTime: proposeTime, GasLimit: defaultGasLimit,
-		FallbackTxOpt: FallbackTxOpt{ReservedFallback: &cloned},
+		PriorityFee: new(big.Int), Nonce: cloned.Nonce, CreateTime: proposeTime,
+		GasLimit: defaultGasLimit, CrossShardPaymentTxOpt: CrossShardPaymentTxOpt{Payment: &cloned},
 	}
 }
 
-func NewFallbackCompletedTransaction(key model.FallbackKey, proposeTime time.Time) *Transaction {
-	cloned := key
+func NewAggregationSettlementTransaction(pack model.AggregationPackage, proposeTime time.Time) *Transaction {
+	cloned := pack.Clone()
 
 	return &Transaction{
-		Value: new(big.Int), PriorityFee: new(big.Int), CreateTime: proposeTime, GasLimit: defaultGasLimit,
-		FallbackTxOpt: FallbackTxOpt{FallbackCompleted: &cloned},
+		Value: new(big.Int), PriorityFee: new(big.Int), CreateTime: proposeTime,
+		GasLimit:                   defaultGasLimit,
+		AggregationSettlementTxOpt: AggregationSettlementTxOpt{Aggregation: &cloned},
 	}
 }
 
-// Encode encodes transactions.
-// Transaction encode should be prepare
 func (tx *Transaction) Encode() ([]byte, error) {
 	return rlp.EncodeToBytes(tx)
 }
 
-// EncodeRLP keeps the legacy transaction fields explicit and commits the
-// settlement package as a deterministic opaque payload. This avoids exposing
-// signed shard identifiers to go-ethereum's unsigned-only RLP reflection.
+// EncodeRLP commits protocol payloads through a deterministic opaque encoding.
 func (tx *Transaction) EncodeRLP(writer io.Writer) error {
-	if tx.isCanonicalIntentEnvelope() {
-		payment := tx.Intent
+	if tx.isCanonicalPaymentEnvelope() {
+		payment := tx.Payment
+
 		return rlp.Encode(writer, struct {
 			Type             byte
 			CreateTime       time.Time
@@ -188,7 +140,7 @@ func (tx *Transaction) EncodeRLP(writer io.Writer) error {
 			ExpiryEpoch      uint64
 			Signature        []byte
 		}{
-			Type: IntentSubmitTxType, CreateTime: tx.CreateTime,
+			Type: CrossShardPaymentTxType, CreateTime: tx.CreateTime,
 			Version: payment.Version, ChainID: payment.ChainID,
 			Sender: payment.Sender, Recipient: payment.Recipient,
 			SourceShard: uint64(payment.SourceShard), DestinationShard: uint64(payment.DestinationShard),
@@ -197,14 +149,17 @@ func (tx *Transaction) EncodeRLP(writer io.Writer) error {
 		})
 	}
 
-	var settlementBytes []byte
-	if tx.Settlement != nil {
+	var aggregationBytes []byte
+
+	if tx.Aggregation != nil {
 		var out bytes.Buffer
-		if err := gob.NewEncoder(&out).Encode(tx.Settlement); err != nil {
-			return fmt.Errorf("encode settlement transaction: %w", err)
+		if err := gob.NewEncoder(&out).Encode(tx.Aggregation); err != nil {
+			return fmt.Errorf("encode aggregation settlement transaction: %w", err)
 		}
-		settlementBytes = out.Bytes()
+
+		aggregationBytes = out.Bytes()
 	}
+
 	type rlpTransaction struct {
 		Sender                    account.Address
 		Recipient                 account.Address
@@ -223,25 +178,8 @@ func (tx *Transaction) EncodeRLP(writer io.Writer) error {
 		OriginalTxCreateTime      time.Time
 		NonceBroker               uint64
 		HeightLock, HeightCurrent uint64
-		Intent                    *intent.PaymentIntent `rlp:"nil"`
-		Settlement                []byte
-		ReservedFallback          []byte
-		FallbackCompleted         []byte
-	}
-	var fallbackBytes, completedBytes []byte
-	if tx.ReservedFallback != nil {
-		var out bytes.Buffer
-		if err := gob.NewEncoder(&out).Encode(tx.ReservedFallback); err != nil {
-			return fmt.Errorf("encode reserved fallback transaction: %w", err)
-		}
-		fallbackBytes = out.Bytes()
-	}
-	if tx.FallbackCompleted != nil {
-		var out bytes.Buffer
-		if err := gob.NewEncoder(&out).Encode(tx.FallbackCompleted); err != nil {
-			return fmt.Errorf("encode fallback completion transaction: %w", err)
-		}
-		completedBytes = out.Bytes()
+		Payment                   *paymentmodel.CrossShardPayment `rlp:"nil"`
+		Aggregation               []byte
 	}
 
 	return rlp.Encode(writer, rlpTransaction{
@@ -250,22 +188,21 @@ func (tx *Transaction) EncodeRLP(writer io.Writer) error {
 		GasLimit: tx.GasLimit, RelayStage: tx.RelayStage, ROriginalHash: tx.ROriginalHash,
 		BrokerStage: tx.BrokerStage, Broker: tx.Broker, BOriginalHash: tx.BOriginalHash,
 		OriginalTxCreateTime: tx.OriginalTxCreateTime, NonceBroker: tx.NonceBroker,
-		HeightLock: tx.HeightLock, HeightCurrent: tx.HeightCurrent, Intent: tx.Intent,
-		Settlement:       settlementBytes,
-		ReservedFallback: fallbackBytes, FallbackCompleted: completedBytes,
+		HeightLock: tx.HeightLock, HeightCurrent: tx.HeightCurrent,
+		Payment: tx.Payment, Aggregation: aggregationBytes,
 	})
 }
 
-func (tx *Transaction) isCanonicalIntentEnvelope() bool {
-	if tx.Intent == nil || tx.Intent.Amount == nil || tx.Value == nil ||
-		tx.Intent.SourceShard < 0 || tx.Intent.DestinationShard < 0 ||
-		tx.Intent.AssetID != intent.NativeAssetID || tx.Sender != tx.Intent.Sender ||
-		tx.Recipient != tx.Intent.Recipient || tx.Value.Cmp(tx.Intent.Amount) != 0 || tx.Nonce != tx.Intent.Nonce ||
+func (tx *Transaction) isCanonicalPaymentEnvelope() bool {
+	if tx.Payment == nil || tx.Payment.Amount == nil || tx.Value == nil ||
+		tx.Payment.SourceShard < 0 || tx.Payment.DestinationShard < 0 ||
+		tx.Payment.AssetID != paymentmodel.NativeAssetID || tx.Sender != tx.Payment.Sender ||
+		tx.Recipient != tx.Payment.Recipient || tx.Value.Cmp(tx.Payment.Amount) != 0 || tx.Nonce != tx.Payment.Nonce ||
 		(tx.PriorityFee != nil && tx.PriorityFee.Sign() != 0) || tx.GasLimit != defaultGasLimit ||
 		len(tx.Signature) != 0 || len(tx.Data) != 0 || tx.RelayStage != 0 || len(tx.ROriginalHash) != 0 ||
 		tx.BrokerStage != 0 || tx.Broker != account.EmptyAccountAddr || len(tx.BOriginalHash) != 0 ||
 		!tx.OriginalTxCreateTime.IsZero() || tx.NonceBroker != 0 || tx.HeightLock != 0 || tx.HeightCurrent != 0 ||
-		tx.Settlement != nil || tx.ReservedFallback != nil || tx.FallbackCompleted != nil {
+		tx.Aggregation != nil {
 		return false
 	}
 
@@ -273,29 +210,23 @@ func (tx *Transaction) isCanonicalIntentEnvelope() bool {
 }
 
 func (tx *Transaction) Hash() ([]byte, error) {
-	b, err := tx.Encode()
+	encoded, err := tx.Encode()
 	if err != nil {
-		return []byte{}, err
+		return nil, err
 	}
 
-	sum := sha256.Sum256(b)
+	sum := sha256.Sum256(encoded)
 
 	return sum[:], nil
 }
 
-// TxType returns the type of a transaction by its variables.
 func (tx *Transaction) TxType() byte {
-	if tx.FallbackCompleted != nil {
-		return FallbackCompletedTxType
+	if tx.Aggregation != nil {
+		return AggregationSettlementTxType
 	}
-	if tx.ReservedFallback != nil {
-		return ReservedFallbackTxType
-	}
-	if tx.Settlement != nil {
-		return SettlementTxType
-	}
-	if tx.Intent != nil {
-		return IntentSubmitTxType
+
+	if tx.Payment != nil {
+		return CrossShardPaymentTxType
 	}
 
 	if len(tx.BOriginalHash) != 0 {

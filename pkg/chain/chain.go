@@ -18,12 +18,12 @@ import (
 	"golang.org/x/exp/maps"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/config"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/merkle"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/account"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/bloom"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/merkle"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/model"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/partition"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/storage"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/utils"
@@ -50,7 +50,7 @@ type Chain struct {
 	cfg            config.BlockchainCfg
 	vmChainCfg     *params.ChainConfig
 	contractExec   ContractExec
-	confirmedRoots map[merkle.Hash]model.MatchRootBlockBody
+	confirmedRoots map[merkle.Hash]model.AggregationBatchHeader
 	mux            sync.Mutex
 }
 
@@ -73,7 +73,7 @@ func NewChain(cfg config.BlockchainCfg, lp config.LocalParams) (*Chain, error) {
 		cfg:            cfg,
 		vmChainCfg:     &vmChainCfg,
 		contractExec:   NewEVMContractExecutor(),
-		confirmedRoots: make(map[merkle.Hash]model.MatchRootBlockBody),
+		confirmedRoots: make(map[merkle.Hash]model.AggregationBatchHeader),
 	}
 
 	genesisBlock, err := chain.initWithGenesisBlock()
@@ -114,9 +114,10 @@ func (c *Chain) GenerateBlock(
 		Type:            blockType,
 		CreateTime:      time.Now(),
 	}
-	body, err = c.curateIntentTransactions(ctx, header, body)
+
+	body, err = c.curateCrossShardPayments(ctx, header, body)
 	if err != nil {
-		return nil, fmt.Errorf("curate payment intents: %w", err)
+		return nil, fmt.Errorf("curate cross-shard payments: %w", err)
 	}
 
 	// Calculate the TxHeaderOpt.
@@ -154,6 +155,7 @@ func (c *Chain) GenerateBlock(
 func (c *Chain) AddBlock(ctx context.Context, b *block.Block) error {
 	c.mux.Lock()
 	defer c.mux.Unlock()
+
 	if err := c.validateBlock(ctx, b); err != nil {
 		return fmt.Errorf("validate block before add: %w", err)
 	}
@@ -180,9 +182,11 @@ func (c *Chain) AddBlock(ctx context.Context, b *block.Block) error {
 	if err != nil {
 		return fmt.Errorf("update trie err: %w", err)
 	}
+
 	if !bytes.Equal(stateRoot, b.StateRoot) {
 		return ErrStateRootMismatch
 	}
+
 	if !bytes.Equal(locationRoot, b.LocationRoot) {
 		return ErrLocationRootMismatch
 	}
@@ -239,12 +243,15 @@ func (c *Chain) validateBlock(ctx context.Context, b *block.Block) error {
 	if err != nil {
 		return fmt.Errorf("calculate current header hash: %w", err)
 	}
+
 	if !bytes.Equal(parentHash, b.ParentBlockHash) {
 		return ErrParentBlockHashMismatch
 	}
+
 	if b.Number != c.curHeader.Number+1 {
 		return fmt.Errorf("%w: got %d, want %d", ErrBlockNumberMismatch, b.Number, c.curHeader.Number+1)
 	}
+
 	if err = validateBlockStructure(b); err != nil {
 		return err
 	}
@@ -256,7 +263,7 @@ func (c *Chain) validateBlock(ctx context.Context, b *block.Block) error {
 	}
 
 	if !bytes.Equal(tH.TxRoot, b.TxRoot) {
-		return fmt.Errorf("tx root mismatch")
+		return fmt.Errorf("tx root mismatch at block %d: proposed %x, calculated %x", b.Number, b.TxRoot, tH.TxRoot)
 	}
 
 	if !tH.Bloom.Equal(b.Bloom) {
@@ -277,9 +284,11 @@ func (c *Chain) validateBlock(ctx context.Context, b *block.Block) error {
 	if err != nil {
 		return fmt.Errorf("preview block state: %w", err)
 	}
+
 	if !bytes.Equal(stateRoot, b.StateRoot) {
 		return ErrStateRootMismatch
 	}
+
 	if !bytes.Equal(locationRoot, b.LocationRoot) {
 		return ErrLocationRootMismatch
 	}
@@ -291,6 +300,7 @@ func validateBlockStructure(b *block.Block) error {
 	if len(b.MigratedAddrs) != len(b.MigratedStates) {
 		return fmt.Errorf("%w: migration address/state length mismatch", ErrInvalidBlockType)
 	}
+
 	switch b.Type {
 	case block.TxBlockType:
 		if len(b.MigratedAddrs) != 0 {
@@ -518,17 +528,13 @@ func (c *Chain) txExecute(
 		if err := brokerTxExecute(v, addrLoc, c.shardID, tx); err != nil {
 			return fmt.Errorf("execute broker tx failed: %w", err)
 		}
-	case transaction.IntentSubmitTxType:
-		if err := c.intentTxExecute(v, tx); err != nil {
-			return fmt.Errorf("execute payment intent failed: %w", err)
+	case transaction.CrossShardPaymentTxType:
+		if err := c.paymentTxExecute(v, tx); err != nil {
+			return fmt.Errorf("execute cross-shard payment failed: %w", err)
 		}
-	case transaction.SettlementTxType:
-		if err := c.settlementTxExecute(v, tx); err != nil {
-			return fmt.Errorf("execute settlement failed: %w", err)
-		}
-	case transaction.ReservedFallbackTxType, transaction.FallbackCompletedTxType:
-		if err := c.fallbackTxExecute(v, tx); err != nil {
-			return fmt.Errorf("execute reserved fallback failed: %w", err)
+	case transaction.AggregationSettlementTxType:
+		if err := c.aggregationSettlementTxExecute(v, tx); err != nil {
+			return fmt.Errorf("execute aggregation settlement failed: %w", err)
 		}
 	case transaction.CreateContractTxType:
 		contractAddr, _, err := c.contractExec.CreateContractTxExecute(v, bCtx, tx)

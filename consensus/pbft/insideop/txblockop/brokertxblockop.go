@@ -7,25 +7,25 @@ import (
 	"time"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/config"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/completion"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/metrics"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/receipt"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/chain"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/fallback"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/metrics"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/receipt"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
 )
 
 // BrokerTxBlockOp is the TxBlockOp which can handle broker transactions.
 type BrokerTxBlockOp struct {
-	c         *chain.Chain
-	conn      *network.ConnHandler
-	resolver  nodetopo.NodeMapper
-	receipts  *receipt.Publisher
-	fallbacks *fallback.Publisher
-	metrics   *metrics.Publisher
+	c          *chain.Chain
+	conn       *network.ConnHandler
+	resolver   nodetopo.NodeMapper
+	receipts   *receipt.Publisher
+	completion *completion.Publisher
+	metrics    *metrics.Publisher
 
 	cfg config.ConsensusNodeCfg
 	lp  config.LocalParams
@@ -39,13 +39,15 @@ func NewBrokerTxBlockOp(
 	lp config.LocalParams,
 ) *BrokerTxBlockOp {
 	return &BrokerTxBlockOp{
-		c:         c,
-		conn:      conn,
-		resolver:  rs,
-		receipts:  receipt.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
-		fallbacks: fallback.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
+		c:        c,
+		conn:     conn,
+		resolver: rs,
+		receipts: receipt.NewPublisher(
+			cfg.AggregationCfg.Enabled, cfg.AggregationCfg.SourceAggregateAbstracts, lp.NodeID, conn, rs,
+		),
+		completion: completion.NewPublisher(cfg.AggregationCfg.Enabled, lp.NodeID, conn, rs),
 		metrics: metrics.NewPublisher(
-			cfg.NettingCfg.Enabled && cfg.NettingCfg.MetricsEnabled, lp.NodeID, conn, rs,
+			cfg.AggregationCfg.Enabled && cfg.AggregationCfg.MetricsEnabled, lp.NodeID, conn, rs,
 		),
 		cfg: cfg,
 		lp:  lp,
@@ -88,15 +90,18 @@ func (bto *BrokerTxBlockOp) BlockCommitAndDeliver(ctx context.Context, isLeader 
 	if !isLeader {
 		return nil
 	}
+
 	committedAt := time.Now()
 	if err := bto.receipts.Publish(ctx, bto.c.GetShardID(), bto.c.GetEpochID(), b, committedAt); err != nil {
 		return fmt.Errorf("publish finalized block receipt: %w", err)
 	}
-	if err := bto.fallbacks.PublishAfterBlock(ctx, b); err != nil {
-		return fmt.Errorf("publish reserved fallback: %w", err)
+
+	if err := bto.completion.PublishCommittedBlock(ctx, bto.c.GetShardID(), b, committedAt); err != nil {
+		return fmt.Errorf("publish aggregation completion: %w", err)
 	}
+
 	if err := bto.metrics.PublishCommittedBlock(ctx, bto.c.GetShardID(), b, committedAt); err != nil {
-		slog.WarnContext(ctx, "publish netting execution metrics failed", "err", err)
+		slog.WarnContext(ctx, "publish aggregation execution metrics failed", "err", err)
 	}
 
 	innerTxs, b1Txs, b2Txs, r1Txs, r2Txs := bto.splitTxs(ctx, b.TxList)
@@ -144,7 +149,7 @@ func (bto *BrokerTxBlockOp) splitTxs(
 	)
 
 	for _, tx := range txs {
-		if isNettingSystemTx(tx) {
+		if isAggregationSystemTx(tx) {
 			continue
 		}
 

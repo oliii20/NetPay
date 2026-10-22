@@ -7,25 +7,25 @@ import (
 	"time"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/config"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/completion"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/metrics"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/receipt"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/chain"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/fallback"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/metrics"
-	"github.com/HuangLab-SYSU/block-emulator-x/pkg/netting/receipt"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/network"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/nodetopo"
 )
 
 // RelayTxBlockOp is the TxBlockOp which can handle relay transactions.
 type RelayTxBlockOp struct {
-	c         *chain.Chain
-	conn      *network.ConnHandler
-	resolver  nodetopo.NodeMapper
-	receipts  *receipt.Publisher
-	fallbacks *fallback.Publisher
-	metrics   *metrics.Publisher
+	c          *chain.Chain
+	conn       *network.ConnHandler
+	resolver   nodetopo.NodeMapper
+	receipts   *receipt.Publisher
+	completion *completion.Publisher
+	metrics    *metrics.Publisher
 
 	cfg config.ConsensusNodeCfg
 	lp  config.LocalParams
@@ -39,13 +39,15 @@ func NewRelayTxBlockOp(
 	lp config.LocalParams,
 ) *RelayTxBlockOp {
 	return &RelayTxBlockOp{
-		c:         c,
-		conn:      conn,
-		resolver:  rs,
-		receipts:  receipt.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
-		fallbacks: fallback.NewPublisher(cfg.NettingCfg.Enabled, lp.NodeID, conn, rs),
+		c:        c,
+		conn:     conn,
+		resolver: rs,
+		receipts: receipt.NewPublisher(
+			cfg.AggregationCfg.Enabled, cfg.AggregationCfg.SourceAggregateAbstracts, lp.NodeID, conn, rs,
+		),
+		completion: completion.NewPublisher(cfg.AggregationCfg.Enabled, lp.NodeID, conn, rs),
 		metrics: metrics.NewPublisher(
-			cfg.NettingCfg.Enabled && cfg.NettingCfg.MetricsEnabled, lp.NodeID, conn, rs,
+			cfg.AggregationCfg.Enabled && cfg.AggregationCfg.MetricsEnabled, lp.NodeID, conn, rs,
 		),
 		cfg: cfg,
 		lp:  lp,
@@ -88,15 +90,18 @@ func (r *RelayTxBlockOp) BlockCommitAndDeliver(ctx context.Context, isLeader boo
 	if !isLeader {
 		return nil
 	}
+
 	committedAt := time.Now()
 	if err := r.receipts.Publish(ctx, r.c.GetShardID(), r.c.GetEpochID(), b, committedAt); err != nil {
 		return fmt.Errorf("publish finalized block receipt: %w", err)
 	}
-	if err := r.fallbacks.PublishAfterBlock(ctx, b); err != nil {
-		return fmt.Errorf("publish reserved fallback: %w", err)
+
+	if err := r.completion.PublishCommittedBlock(ctx, r.c.GetShardID(), b, committedAt); err != nil {
+		return fmt.Errorf("publish aggregation completion: %w", err)
 	}
+
 	if err := r.metrics.PublishCommittedBlock(ctx, r.c.GetShardID(), b, committedAt); err != nil {
-		slog.WarnContext(ctx, "publish netting execution metrics failed", "err", err)
+		slog.WarnContext(ctx, "publish aggregation execution metrics failed", "err", err)
 	}
 
 	// deliver this block info to the supervisor
@@ -127,7 +132,7 @@ func (r *RelayTxBlockOp) modifyTxRelayOpt(
 	shardID := r.c.GetShardID()
 
 	for _, tx := range txs {
-		if isNettingSystemTx(tx) {
+		if isAggregationSystemTx(tx) {
 			modifiedTxs = append(modifiedTxs, tx)
 			continue
 		}
@@ -196,7 +201,7 @@ func (r *RelayTxBlockOp) splitTxs(
 	)
 
 	for _, tx := range txs {
-		if isNettingSystemTx(tx) {
+		if isAggregationSystemTx(tx) {
 			continue
 		}
 
@@ -215,10 +220,9 @@ func (r *RelayTxBlockOp) splitTxs(
 	return innerTxs, r1txs, r2txs
 }
 
-func isNettingSystemTx(tx transaction.Transaction) bool {
+func isAggregationSystemTx(tx transaction.Transaction) bool {
 	switch tx.TxType() {
-	case transaction.IntentSubmitTxType, transaction.SettlementTxType,
-		transaction.ReservedFallbackTxType, transaction.FallbackCompletedTxType:
+	case transaction.CrossShardPaymentTxType, transaction.AggregationSettlementTxType:
 		return true
 	default:
 		return false

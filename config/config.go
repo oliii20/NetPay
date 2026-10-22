@@ -18,7 +18,7 @@ type Config struct {
 	ConsensusNodeCfg `          json:"consensus_node" yaml:"consensus_node"`
 	SupervisorCfg    `          json:"supervisor"     yaml:"supervisor"`
 	NetworkCfg       `          json:"network"        yaml:"network"`
-	NettingCfg       `          json:"netting"        yaml:"netting"`
+	AggregationCfg   `          json:"aggregation"    yaml:"aggregation"`
 }
 
 type LocalParams struct {
@@ -60,16 +60,55 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("unsupported cfg type")
 	}
 
+	if err = validateAggregationConfig(cfg); err != nil {
+		return nil, err
+	}
+
 	// pass the global system config to the supervisor config
 	cfg.SystemCfg = cfg.GlobalSys
-	cfg.SupervisorCfg.NettingCfg = cfg.NettingCfg
-	cfg.SupervisorCfg.ChainID = cfg.ConsensusNodeCfg.ChainID
+	cfg.SupervisorCfg.AggregationCfg = cfg.AggregationCfg
+	cfg.ChainID = cfg.ConsensusNodeCfg.ChainID
 	// pass the global system config to the consensus config
 	cfg.ConsensusNodeCfg.SystemCfg = cfg.GlobalSys
-	cfg.ConsensusNodeCfg.NettingCfg = cfg.NettingCfg
-	cfg.ConsensusNodeCfg.BlockchainCfg.SimplifiedSettlement = cfg.NettingCfg.SimplifiedSettlement
+	cfg.ConsensusNodeCfg.AggregationCfg = cfg.AggregationCfg
 
 	return cfg, nil
+}
+
+func validateAggregationConfig(cfg *Config) error {
+	if !cfg.Enabled {
+		return nil
+	}
+
+	if cfg.GlobalSys.ShardNum <= 1 {
+		return fmt.Errorf("aggregation requires at least two shards")
+	}
+
+	if cfg.ConsensusNodeCfg.ChainID < 0 {
+		return fmt.Errorf("aggregation requires a non-negative chain ID")
+	}
+
+	if cfg.BatchOnly && cfg.SourceAggregateAbstracts {
+		return fmt.Errorf("batch_only requires source_aggregate_abstracts=false")
+	}
+
+	if cfg.BatchSize < 0 || cfg.CreditChunkSize < 0 {
+		return fmt.Errorf("aggregation batch and credit chunk sizes must be non-negative")
+	}
+
+	if cfg.MaxWindowDurationMS <= 0 {
+		return fmt.Errorf("aggregation max_window_duration_ms must be positive")
+	}
+
+	if cfg.BeaconStorePath == "" {
+		return fmt.Errorf("aggregation beacon_store_path must not be empty")
+	}
+
+	if cfg.GlobalSys.ConsensusType != StaticRelayConsensus && cfg.GlobalSys.ConsensusType != StaticBrokerConsensus {
+		return fmt.Errorf("aggregation currently requires static_relay or static_broker consensus")
+	}
+
+	return nil
 }
 
 func LoadLocalParams() (*LocalParams, error) {

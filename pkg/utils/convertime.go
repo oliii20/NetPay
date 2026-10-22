@@ -9,5 +9,5 @@ func ConvertTime2Str(t time.Time) string {
 		return ""
 	}
 
-	return t.Format(time.RFC3339)
+	return t.Format(time.RFC3339Nano)
 }
