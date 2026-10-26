@@ -37,6 +37,16 @@ class AnalyzeTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     analyze.summarize(root, method, 2)
 
+class MethodCompatibilityTest(unittest.TestCase):
+    def test_legacy_and_four_method_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'repeat-01/relay').mkdir(parents=True)
+            self.assertEqual(analyze.methods_for(root), analyze.LEGACY_METHODS)
+            (root/'repeat-01/aggregation_only').mkdir()
+            self.assertEqual(analyze.methods_for(root), analyze.METHODS)
+            self.assertEqual(analyze.methods_for(root.parent / 'nonexistent-method-test'), analyze.LEGACY_METHODS)
+
 
 if __name__ == '__main__':
     unittest.main()

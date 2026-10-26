@@ -37,6 +37,7 @@ type ConsensusNodeCfg struct {
 }
 
 type AggregationCfg struct {
+	AggregationOnly          bool   `json:"aggregation_only" yaml:"aggregation_only"`
 	BatchOnly                bool   `json:"batch_only" yaml:"batch_only"`
 	Enabled                  bool   `json:"enabled"                               yaml:"enabled"`
 	MetricsEnabled           bool   `json:"metrics_enabled"                       yaml:"metrics_enabled"`

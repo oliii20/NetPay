@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import statistics
-from plot_common import args, read, save, plt, METHODS, LABELS
+from plot_common import args, read, save, plt, METHODS, LABELS, methods_for
 
 
 def main():
@@ -11,13 +11,15 @@ def main():
     stages = ('source_ms', 'coordination_ms', 'destination_ms')
     labels = ('Source queue + confirmation', 'Coordination wait + confirmation', 'Destination transfer + queue + confirmation')
     colors = ('#65758B', '#E7AA53', '#459D90')
-    for i, method in enumerate(METHODS):
+    methods = methods_for(rows)
+    width = .8 / len(methods)
+    for i, method in enumerate(methods):
         bottoms = [0.]*len(shards)
         for stage, label, color in zip(stages, labels, colors):
             means = [statistics.fmean(float(r[stage])/1000 for r in rows if int(r['shards']) == shard and r['method'] == method) for shard in shards]
-            ax.bar([j+(i-1)*.25 for j in range(len(shards))], means, .24, bottom=bottoms, color=color, label=label if i == 0 else None)
+            ax.bar([j+(i-(len(methods)-1)/2)*width for j in range(len(shards))], means, width*.95, bottom=bottoms, color=color, label=label if i == 0 else None)
             bottoms = [a+b for a,b in zip(bottoms, means)]
-    ax.set_xticks([j+(i-1)*.25 for j in range(len(shards)) for i in range(3)], [f'{s}\n{l}' for s in shards for l in ('Relay', 'Batch', 'Full')], fontsize=9)
+    ax.set_xticks([j+(i-(len(methods)-1)/2)*width for j in range(len(shards)) for i in range(len(methods))], [f'{s}\n{l}' for s in shards for l in [{'relay':'Relay','batch_only':'Batch','aggregation_only':'Agg','full_aggregation':'Full'}[m] for m in methods]], fontsize=9)
     ax.set_xlabel('Number of shards / method')
     ax.set_ylabel('Mean CTX latency (s)')
     ax.legend(frameon=False, fontsize=9, loc='upper left', bbox_to_anchor=(0, 1.22))

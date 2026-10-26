@@ -9,7 +9,15 @@ from pathlib import Path
 spec = importlib.util.spec_from_file_location('comparison', Path(__file__).resolve().parents[1] / 'aggregation_4shard_300k/analyze.py')
 comparison = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(comparison)
-METHODS = ('relay', 'batch_only', 'full_aggregation')
+METHODS = ('relay', 'batch_only', 'aggregation_only', 'full_aggregation')
+LEGACY_METHODS = ('relay', 'batch_only', 'full_aggregation')
+
+
+def methods_for(root):
+    # Old three-method results remain readable; a new group must be complete.
+    present = any(root.glob('repeat-*/aggregation_only')) or any(root.glob('shards-*/repeat-*/aggregation_only'))
+    return METHODS if present else LEGACY_METHODS
+
 
 
 def summarize(run, method, expected):
@@ -47,7 +55,7 @@ def main():
     args = parser.parse_args()
     rows = []
     for repeat in sorted(args.input.glob('repeat-*')):
-        for method in METHODS:
+        for method in methods_for(args.input):
             row = summarize(repeat / method, method, args.expected_txs)
             row['repeat'] = repeat.name
             rows.append(row)

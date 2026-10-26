@@ -88,6 +88,15 @@ func validateAggregationConfig(cfg *Config) error {
 		return fmt.Errorf("aggregation requires a non-negative chain ID")
 	}
 
+	if cfg.AggregationOnly && cfg.BatchOnly {
+		return fmt.Errorf("aggregation_only and batch_only are mutually exclusive")
+	}
+	if cfg.AggregationOnly && cfg.SourceAggregateAbstracts {
+		return fmt.Errorf("aggregation_only requires source_aggregate_abstracts=false")
+	}
+	if cfg.AggregationOnly {
+		cfg.CreditChunkSize = 1
+	}
 	if cfg.BatchOnly && cfg.SourceAggregateAbstracts {
 		return fmt.Errorf("batch_only requires source_aggregate_abstracts=false")
 	}

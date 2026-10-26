@@ -4,7 +4,7 @@ Run from the repository root. Requires Go 1.25.7, Python 3, local TCP sockets,
 and `data/25250000to25499999_BlockTransaction.csv` (existing default dataset).
 
 ```bash
-# Small real-data integration run, all three schemes:
+# Small real-data integration run, all four schemes:
 TX_NUMBER=1000 TX_SPEED=1000 OUTPUT_ROOT=exp/aggregation-ablation-check \
   bash experiments/aggregation_ablation/run.sh
 
@@ -84,3 +84,9 @@ they do not replay an identical transaction set across methods.
 python3 -m unittest discover -s experiments/aggregation_ablation -p 'test_*.py'
 go test ./pkg/aggregation/... ./supervisor/measure/aggregationstats ./config
 ```
+
+New runs also include `aggregation_only`: Beacon merges same-account/asset credits
+but emits one settlement per resulting credit (effective chunk size 1), with source
+summary merging disabled. Full keeps source merging enabled. See
+`../aggregation_scaling/README.md` for the four-way controls and interpretation.
+Set `INCLUDE_AGGREGATION_ONLY=0` to retain the previous three-method runner.

@@ -1,4 +1,4 @@
-# Three-method shard scaling experiment
+# Shard scaling and four-method ablation experiment
 
 From the repository root:
 
@@ -8,7 +8,7 @@ REPEATS=1 SHARDS="4" TX_NUMBER=1000 TX_SPEED=1000 TIMEOUT=300 \
 OUTPUT_ROOT=exp/aggregation-scaling-check \
 bash experiments/aggregation_scaling/run.sh
 
-# Full grid: 4 shard counts × 3 methods × 3 repeats.
+# Full grid: 4 shard counts × 4 methods × 3 repeats.
 REPEATS=3 SHARDS="4 8 16 24" TX_NUMBER=300000 TX_SPEED=20000 TIMEOUT=1800 \
 OUTPUT_ROOT=exp/aggregation-scaling \
 bash experiments/aggregation_scaling/run.sh
@@ -142,3 +142,121 @@ can overshoot the threshold. It is **not** a strict byte or original-CTX limit.
 First rerun with the unchanged default to isolate the dispatch fixes; evaluate a
 finite threshold as a separate experiment. Authentication, replay checks and batch
 validation remain enabled.
+
+
+## Window and settlement chunk sweeps
+
+The runner accepts `WINDOW_MS` (positive integer, default 2000) and
+`CREDIT_CHUNK_SIZE` (positive integer, default 512). Both are rendered into each
+method's saved config. Relay ignores aggregation settings. Batch-only and full
+aggregation receive identical settings. Environment overrides propagate through
+the scaling runner. Fix the chunk size while selecting a window, then fix the
+chosen window while scanning chunks. Use fresh OUTPUT_ROOT paths for each setting.
+Beacon proposal interval, ordinary block interval and BATCH_SIZE are unchanged.
+
+## Batched replay checks and state-bound validation reuse
+
+Beacon validation now uses one BoltDB read snapshot for the committed tip and all
+consumed-ID lookups. A validator retains at most one successful result, keyed by a
+SHA-256 fingerprint of the **entire gob-encoded batch** (header and sidecar) and
+the committed tip identity/presence. Every lookup fingerprints current content;
+changed content or a new committed tip requires full validation. This applies to
+leader self-delivery and repeated proposals, without sharing results across nodes
+or bypassing initial receipt coverage, duplicate-ID, payment or aggregation checks.
+The read transaction remains open during full validation to keep replay checks
+consistent with its tip. It must not contain writes.
+
+The runner accepts `BEACON_INTERVAL_MS` (positive integer, default 2000). This
+sets only `consensus_node.shard_block_intervals_ms[2147483646]`; ordinary shards
+keep their existing 2000 ms interval. It is a minimum proposal interval, not a
+promise of a completed consensus round at that frequency. The 500 ms PBFT message
+loop and postcommit package-dispatch behavior are unchanged in this experiment.
+
+First compare the validation fix at the existing Beacon interval, then scan the
+interval. The helper runs 24 shards at both 10,800 and 14,400 total TPS, each with
+2000/1000/500 ms Beacon intervals. Window=2000 ms, chunk=512, batch threshold=0,
+block entry limit=2000, three methods and fresh directories for each setting:
+
+```bash
+REPEATS=1 OUTPUT_BASE=exp/aggregation-beacon-interval-v2 \
+  bash experiments/aggregation_scaling/run_beacon_interval_sweep.sh
+```
+
+This is 18 cluster runs. Repeat promising settings after the initial scan.
+`SPEEDS`, `INTERVALS`, `SHARDS`, and other documented environment variables can be
+overridden. All resulting CSVs and coordination diagnostics remain in their own
+`speedN-beaconM` directories. New 2000 ms results isolate the validation changes
+relative to older runs only approximately; rerun baselines and consider run noise.
+
+To run only a small integration check with the new binary and interval:
+
+```bash
+REPEATS=1 SHARDS=4 TX_NUMBER=1000 TX_SPEED=1000 TIMEOUT=300 \
+BEACON_INTERVAL_MS=500 OUTPUT_ROOT=exp/aggregation-validation-check \
+  bash experiments/aggregation_scaling/run.sh
+```
+
+## Four-way ablation including aggregation-only
+
+New experiments default to four methods: `relay`, `batch_only`, `aggregation_only`,
+`full_aggregation`. Set `INCLUDE_AGGREGATION_ONLY=0` to reproduce the former three-way
+runner. Analysis and all plot entry points also accept existing three-method data.
+
+| Method | Source summary merge | Receiver-account merge | Multi-account settlement |
+|---|---|---|---|
+| relay | no | no | no |
+| batch_only | no | no | yes |
+| aggregation_only | no | yes | no: one credit per settlement |
+| full_aggregation | yes | yes | yes |
+
+`aggregation.aggregation_only: true` is mutually exclusive with `batch_only` and
+requires `source_aggregate_abstracts: false`. Config loading normalizes the credit
+chunk size to **1**, and the Beacon constructor also enforces it for programmatic
+configs. The existing header commits CreditChunkSize=1; existing batch validation,
+chunk proofs, replay protection, chunk application and per-original-CTX completion
+tracking are used without weakening verification. `CREDIT_CHUNK_SIZE` continues to
+control batch-only and full; it does not override aggregation-only's single-credit
+rule. A batch can combine credits from multiple source shards, but each resulting
+account/asset credit gets its own target transaction. It still uses the same window
+and Beacon consensus path.
+
+Full retains its existing source optimization at the user's request. Consequently,
+aggregation-only versus full includes both source merging and multi-account
+encapsulation, not a strictly isolated comparison of target encapsulation alone.
+Aggregation-only may produce tens of thousands of settlement objects: execution
+and proof overhead can be substantial; fewer updates do not guarantee higher TPS.
+
+Quick check:
+
+```bash
+REPEATS=1 SHARDS=4 TX_NUMBER=1000 TX_SPEED=1000 TIMEOUT=300 \
+BEACON_INTERVAL_MS=1000 OUTPUT_ROOT=exp/aggregation-fourway-check \
+  bash experiments/aggregation_scaling/run.sh
+```
+
+Four shard configurations at equal per-shard injection rate (four methods × three
+repeats × four shard counts = 48 runs):
+
+```bash
+for shards in 4 8 16 24; do
+  speed=$((shards * 600))
+  REPEATS=3 SHARDS="${shards}" TX_NUMBER=300000 TX_SPEED="${speed}" TIMEOUT=3600 \
+  BLOCK_LIMIT=2000 BATCH_SIZE=0 BEACON_INTERVAL_MS=1000 WINDOW_MS=2000 CREDIT_CHUNK_SIZE=512 \
+  OUTPUT_ROOT=exp/aggregation-fourway-scale \
+    bash experiments/aggregation_scaling/run.sh || break
+done
+bash experiments/aggregation_scaling/plot_all.sh --input exp/aggregation-fourway-scale
+```
+
+Scheduling caveat: the existing number-based pool additionally caps settlement
+objects at 512 per block (`maxHeavyAggregationTxsPerNumBlock`), including
+single-credit aggregation-only transactions, while the general block entry limit
+may be 2000. This change deliberately preserves that existing scheduling rule
+across all settlement variants. Thus Relay versus aggregation-only also compares
+these existing scheduling policies; interpret throughput together with this cap
+and proof overhead, not as an isolated balance-addition microbenchmark.
+
+The dedicated `run_beacon_interval_sweep.sh` retains its original three methods
+by default (`INCLUDE_AGGREGATION_ONLY=0`); set that variable to 1 explicitly to
+include the new method in an interval sweep. The ordinary scaling/ablation runner
+defaults to four methods.

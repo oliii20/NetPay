@@ -1,0 +1,25 @@
+# Eight-shard ablation results
+
+Values are means; repeated-seed results are reported as mean ± 95% CI.
+
+## Injection rate
+
+| Setting | Fully matched (%) | Matched value (%) | Average latency (s) | P95 latency (s) | Throughput (tx/s) | Capital lock (s) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1500 tx/s | 97.77 | 22.02 | 6.93 | 8.54 | 1339.3 | 5.00 |
+| 3000 tx/s | 98.57 | 28.33 | 6.92 | 8.73 | 2400.0 | 5.00 |
+| 4500 tx/s | 99.03 | 32.51 | 7.18 | 9.04 | 3260.9 | 4.99 |
+| 6000 tx/s | 97.45 | 33.35 | 8.11 | 13.37 | 3529.4 | 5.02 |
+| 7500 tx/s | 93.40 | 34.22 | 11.16 | 22.30 | 3614.5 | 5.32 |
+| 9000 tx/s | 93.32 | 34.02 | 13.55 | 24.35 | 3658.5 | 5.00 |
+
+## Maximum window
+
+| Setting | Fully matched (%) | Matched value (%) | Average latency (s) | P95 latency (s) | Throughput (tx/s) | Capital lock (s) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 500 ms | 56.29 | 19.81 | 12.57 | 21.73 | 3296.7 | 10.30 |
+| 1000 ms | 97.44 | 33.13 | 8.15 | 13.34 | 3571.4 | 5.04 |
+| 1500 ms | 97.15 | 32.92 | 7.91 | 13.34 | 3614.5 | 5.00 |
+| 2000 ms | 97.44 | 33.53 | 8.60 | 13.86 | 3571.4 | 5.69 |
+| 3000 ms | 97.55 | 37.51 | 8.99 | 13.47 | 3571.4 | 6.24 |
+| 4000 ms | 97.95 | 41.90 | 9.91 | 15.47 | 3409.1 | 7.11 |

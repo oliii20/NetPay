@@ -31,3 +31,29 @@ func TestValidateAggregationConfigRejectsDynamicSharding(t *testing.T) {
 	}
 	require.ErrorContains(t, validateAggregationConfig(cfg), "static_relay or static_broker")
 }
+
+func TestAggregationOnlyConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		batchOnly, sourceAggregate bool
+		wantErr                    string
+	}{
+		{name: "one credit per settlement"},
+		{name: "conflicting modes", batchOnly: true, wantErr: "mutually exclusive"},
+		{name: "source merging disabled", sourceAggregate: true, wantErr: "source_aggregate_abstracts=false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{GlobalSys: SystemCfg{ShardNum: 4, ConsensusType: StaticRelayConsensus}, AggregationCfg: AggregationCfg{
+				Enabled: true, AggregationOnly: true, BatchOnly: tc.batchOnly, SourceAggregateAbstracts: tc.sourceAggregate,
+				CreditChunkSize: 512, MaxWindowDurationMS: 2000, BeaconStorePath: "beacon.db",
+			}}
+			err := validateAggregationConfig(cfg)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 1, cfg.CreditChunkSize)
+		})
+	}
+}

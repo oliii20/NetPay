@@ -53,6 +53,9 @@ func New(
 	shardCount, chainID, nodeID int64,
 	cfg config.AggregationCfg,
 ) *Op {
+	if cfg.AggregationOnly {
+		cfg.CreditChunkSize = 1
+	}
 	return &Op{
 		conn: conn, resolver: resolver, store: store,
 		validator:  beacon.NewValidator(store, uint64(chainID), shardCount),

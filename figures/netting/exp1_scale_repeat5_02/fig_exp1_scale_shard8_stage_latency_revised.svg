@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="610" viewBox="0 0 980 610">
+<rect width="100%" height="100%" fill="white"/>
+<defs>
+<pattern id="source_s" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="#8C8C8C"/><circle cx="5" cy="5" r="1.2" fill="none" stroke="#555" stroke-width="0.8"/></pattern>
+<pattern id="matching_s" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="#E58A55"/><path d="M-2,10 L10,-2 M6,14 L14,6" stroke="#555" stroke-width="1"/></pattern>
+<pattern id="coordination_s" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="#D9C27A"/><path d="M-2,-2 L10,10 M6,-2 L14,6" stroke="#555" stroke-width="1"/></pattern>
+<pattern id="target_s" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="#5DB0CC"/><path d="M-2,10 L10,-2 M-2,-2 L10,10 M6,14 L14,6 M6,-2 L14,6" stroke="#555" stroke-width="0.9"/></pattern>
+<pattern id="settlement_s" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="#C95359"/><path d="M-2,-2 L10,10 M6,-2 L14,6 M5,0 V10" stroke="#555" stroke-width="0.9"/></pattern>
+<pattern id="fallback_s" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="#7A6F9B"/><path d="M0,5 H10" stroke="#555" stroke-width="1"/></pattern>
+</defs>
+<style>text{font-family:"Times New Roman",Times,serif;fill:#111}.tick{font-size:19px}.axis{font-size:24px}.xlabel{font-size:25px}.total{font-size:21px}.legend{font-size:16px}</style>
+<line x1="115" y1="475.00" x2="735" y2="475.00" stroke="#DDD"/>
+<text x="101" y="481.00" text-anchor="end" class="tick">0</text>
+<line x1="115" y1="352.14" x2="735" y2="352.14" stroke="#DDD"/>
+<text x="101" y="358.14" text-anchor="end" class="tick">10</text>
+<line x1="115" y1="229.29" x2="735" y2="229.29" stroke="#DDD"/>
+<text x="101" y="235.29" text-anchor="end" class="tick">20</text>
+<line x1="115" y1="106.43" x2="735" y2="106.43" stroke="#DDD"/>
+<text x="101" y="112.43" text-anchor="end" class="tick">30</text>
+<line x1="115" y1="45" x2="115" y2="475" stroke="#222" stroke-width="1.5"/>
+<line x1="115" y1="475" x2="735" y2="475" stroke="#222" stroke-width="1.5"/>
+<rect x="151.50" y="301.61" width="82" height="173.39" fill="url(#source_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="151.50" y="301.61" width="82" height="0.00" fill="url(#matching_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="151.50" y="301.61" width="82" height="0.00" fill="url(#coordination_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="151.50" y="129.60" width="82" height="172.01" fill="url(#target_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="151.50" y="129.60" width="82" height="0.00" fill="url(#settlement_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="151.50" y="129.60" width="82" height="0.00" fill="url(#fallback_s)" stroke="#444" stroke-width="0.8"/>
+<text x="192.50" y="119.60" text-anchor="middle" class="total">28.1</text>
+<text x="192.50" y="510" text-anchor="middle" class="xlabel">Monoxide</text>
+<rect x="306.50" y="300.66" width="82" height="174.34" fill="url(#source_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="306.50" y="300.66" width="82" height="0.00" fill="url(#matching_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="306.50" y="295.72" width="82" height="4.94" fill="url(#coordination_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="306.50" y="119.09" width="82" height="176.63" fill="url(#target_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="306.50" y="119.09" width="82" height="0.00" fill="url(#settlement_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="306.50" y="119.09" width="82" height="0.00" fill="url(#fallback_s)" stroke="#444" stroke-width="0.8"/>
+<text x="347.50" y="109.09" text-anchor="middle" class="total">29.0</text>
+<text x="347.50" y="510" text-anchor="middle" class="xlabel">BrokerChain</text>
+<rect x="461.50" y="288.13" width="82" height="186.87" fill="url(#source_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="461.50" y="288.13" width="82" height="0.00" fill="url(#matching_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="461.50" y="288.13" width="82" height="0.00" fill="url(#coordination_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="461.50" y="112.75" width="82" height="175.37" fill="url(#target_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="461.50" y="112.75" width="82" height="0.00" fill="url(#settlement_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="461.50" y="112.75" width="82" height="0.00" fill="url(#fallback_s)" stroke="#444" stroke-width="0.8"/>
+<text x="502.50" y="102.75" text-anchor="middle" class="total">29.5</text>
+<text x="502.50" y="510" text-anchor="middle" class="xlabel">CLPA</text>
+<rect x="616.50" y="428.95" width="82" height="46.05" fill="url(#source_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="616.50" y="398.19" width="82" height="30.76" fill="url(#matching_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="616.50" y="398.19" width="82" height="0.00" fill="url(#coordination_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="616.50" y="398.19" width="82" height="0.00" fill="url(#target_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="616.50" y="369.00" width="82" height="29.20" fill="url(#settlement_s)" stroke="#444" stroke-width="0.8"/>
+<rect x="616.50" y="368.19" width="82" height="0.81" fill="url(#fallback_s)" stroke="#444" stroke-width="0.8"/>
+<text x="657.50" y="358.19" text-anchor="middle" class="total">8.7</text>
+<text x="657.50" y="510" text-anchor="middle" class="xlabel">Netting</text>
+<text transform="translate(32 260.0) rotate(-90)" text-anchor="middle" class="axis">Avg stage latency (s)</text>
+<rect x="745" y="48" width="225" height="354" rx="8" fill="#FAFAFA" stroke="#999"/>
+<rect x="765" y="74" width="45" height="28" fill="url(#fallback_s)" stroke="#444"/>
+<text x="822" y="95" class="legend">Fallback</text>
+<rect x="765" y="121" width="45" height="28" fill="url(#settlement_s)" stroke="#444"/>
+<text x="822" y="142" class="legend">Settlement</text>
+<rect x="765" y="168" width="45" height="28" fill="url(#target_s)" stroke="#444"/>
+<text x="822" y="189" class="legend">Target</text>
+<rect x="765" y="215" width="45" height="28" fill="url(#coordination_s)" stroke="#444"/>
+<text x="822" y="236" class="legend">Coord.</text>
+<rect x="765" y="262" width="45" height="28" fill="url(#matching_s)" stroke="#444"/>
+<text x="822" y="283" class="legend">Matching</text>
+<rect x="765" y="309" width="45" height="28" fill="url(#source_s)" stroke="#444"/>
+<text x="822" y="330" class="legend">Source</text>
+<text x="735" y="553" text-anchor="end" class="tick" fill="#555">8 shards; mean over 2 runs</text>
+</svg>

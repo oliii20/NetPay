@@ -2,9 +2,12 @@ package beacon
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/batch"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/merkle"
@@ -20,39 +23,53 @@ var (
 )
 
 type Validator struct {
-	store      *Store
-	chainID    uint64
-	shardCount int64
+	mux          sync.Mutex
+	cached       bool
+	cachedDigest [32]byte
+	cachedTip    merkle.Hash
+	cachedHasTip bool
+	store        *Store
+	chainID      uint64
+	shardCount   int64
 }
 
 func NewValidator(store *Store, chainID uint64, shardCount int64) *Validator {
 	return &Validator{store: store, chainID: chainID, shardCount: shardCount}
 }
 
+// Validate caches only successful checks of the entire encoded proposal against
+// an unchanged committed tip. Header BatchID alone cannot authenticate a sidecar.
 func (v *Validator) Validate(proposal model.AggregationBatch) error {
-	tip, hasTip, err := v.store.Tip()
-	if err != nil {
-		return err
-	}
+	v.mux.Lock()
+	defer v.mux.Unlock()
 
-	if err = validateSequence(proposal.Header, tip, hasTip); err != nil {
-		return err
+	hasher := sha256.New()
+	if err := gob.NewEncoder(hasher).Encode(proposal); err != nil {
+		return fmt.Errorf("hash validation proposal: %w", err)
 	}
+	var digest [32]byte
+	copy(digest[:], hasher.Sum(nil))
 
-	payments, err := v.validateReceiptCoverage(proposal, tip, hasTip)
-	if err != nil {
-		return err
-	}
-
-	if len(payments) == 0 {
-		return batch.ErrEmptyWindow
-	}
-
-	if err = batch.VerifyBatch(proposal); err != nil {
-		return fmt.Errorf("verify aggregation batch: %w", err)
-	}
-
-	return nil
+	return v.store.validationSnapshot(func(tip AggregationBlock, hasTip bool, hasPayment func(paymentmodel.ID) bool) error {
+		if v.cached && digest == v.cachedDigest && hasTip == v.cachedHasTip && tip.Body.BatchID == v.cachedTip {
+			return nil
+		}
+		if err := validateSequence(proposal.Header, tip, hasTip); err != nil {
+			return err
+		}
+		payments, err := v.validateReceiptCoverage(proposal, tip, hasTip, hasPayment)
+		if err != nil {
+			return err
+		}
+		if len(payments) == 0 {
+			return batch.ErrEmptyWindow
+		}
+		if err = batch.VerifyBatch(proposal); err != nil {
+			return fmt.Errorf("verify aggregation batch: %w", err)
+		}
+		v.cached, v.cachedDigest, v.cachedTip, v.cachedHasTip = true, digest, tip.Body.BatchID, hasTip
+		return nil
+	})
 }
 
 func validateSequence(header model.AggregationBatchHeader, tip AggregationBlock, hasTip bool) error {
@@ -75,6 +92,7 @@ func (v *Validator) validateReceiptCoverage(
 	proposal model.AggregationBatch,
 	tip AggregationBlock,
 	hasTip bool,
+	hasPayment func(paymentmodel.ID) bool,
 ) ([]paymentmodel.CrossShardPayment, error) {
 	previousCuts := make(map[int64]model.ShardCut)
 
@@ -157,12 +175,7 @@ func (v *Validator) validateReceiptCoverage(
 						return nil, fmt.Errorf("%w: %x", batch.ErrDuplicatePayment, id)
 					}
 
-					consumed, consumedErr := v.store.HasPayment(id)
-					if consumedErr != nil {
-						return nil, consumedErr
-					}
-
-					if consumed {
+					if hasPayment(id) {
 						return nil, fmt.Errorf("%w: %x", ErrPaymentConsumed, id)
 					}
 
