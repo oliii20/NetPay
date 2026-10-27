@@ -46,6 +46,10 @@ with socket.socket() as probe:
     probe.bind(('127.0.0.1', 0))
 PYCODE
 mkdir -p "${BIN_DIR}"
+if [[ "${METHODS:-}" == *hot_destination_* ]]; then
+  [[ "${TX_SOURCE}" == csv_source ]] || { echo "hot destination requires historical CSV dataset" >&2; exit 1; }
+  GOCACHE="${GOCACHE:-/tmp/block-emulator-x-comparison-cache}" go run ./cmd/hotdestinations -shards="${SHARD_NUM}" -tx-number="${TX_NUMBER}" -output="${OUTPUT_ROOT}/destination_ranking.json"
+fi
 GOCACHE="${GOCACHE:-/tmp/block-emulator-x-comparison-cache}" go build -o "${BIN_DIR}/consensusnode" ./cmd/consensusnode
 GOCACHE="${GOCACHE:-/tmp/block-emulator-x-comparison-cache}" go build -o "${BIN_DIR}/beaconnode" ./cmd/beaconnode
 GOCACHE="${GOCACHE:-/tmp/block-emulator-x-comparison-cache}" go build -o "${BIN_DIR}/supervisor" ./cmd/supervisor
@@ -57,15 +61,21 @@ run_case() {
   local run_dir="${OUTPUT_ROOT}/repeat-$(printf '%02d' "${repeat}")/${method}"
   local config_path="${run_dir}/config.yaml"
   local process_log_dir="${run_dir}/process_logs"
+  local template_method="${method}"
+  [[ "${method}" == hot_destination_* ]] && template_method=full_aggregation
 
   if [[ -e "${run_dir}" ]]; then echo "output already exists: ${run_dir}; set OUTPUT_ROOT to a new path" >&2; return 1; fi
   mkdir -p "${process_log_dir}"
   sed -e "s|__RUN_DIR__|${run_dir}|g" -e "s|__TX_NUMBER__|${TX_NUMBER}|g" -e "s|__TX_SPEED__|${TX_SPEED}|g" -e "s|__TX_SOURCE__|${TX_SOURCE}|g" -e "s|__BLOCK_LIMIT__|${BLOCK_LIMIT}|g" \
-    "experiments/aggregation_ablation/${method}.yaml.tmpl" | \
+    "experiments/aggregation_ablation/${template_method}.yaml.tmpl" | \
     sed -e "s/^  shard_num: 4$/  shard_num: ${SHARD_NUM}/" -e "s/^  node_num: 4$/  node_num: ${NODE_NUM}/" -e "s/^  batch_size: 0$/  batch_size: ${BATCH_SIZE}/" \
       -e "s/^  max_window_duration_ms: 2000$/  max_window_duration_ms: ${WINDOW_MS}/" \
       -e "s/^  credit_chunk_size: 512$/  credit_chunk_size: ${CREDIT_CHUNK_SIZE}/" \
       -e "s/__BEACON_INTERVAL_MS__/${BEACON_INTERVAL_MS}/g" > "${config_path}"
+
+  if [[ "${method}" == hot_destination_* ]]; then
+    python3 experiments/aggregation_hot_destination/select_destinations.py --ranking "${OUTPUT_ROOT}/destination_ranking.json" --percent "${method#hot_destination_}" --config "${config_path}" --output "${run_dir}/selection.json"
+  fi
 
   PROCESS_IDS=()
   for ((shard_id=0; shard_id<SHARD_NUM; shard_id++)); do
@@ -125,6 +135,8 @@ for ((repeat=1; repeat<=REPEATS; repeat++)); do
   if [[ "${INCLUDE_AGGREGATION_ONLY:-1}" == 1 ]]; then
     methods=(relay batch_only aggregation_only full_aggregation)
   fi
+  if [[ -n "${METHODS:-}" ]]; then read -r -a methods <<< "${METHODS}"; fi
+  printf '%s\n' "${methods[@]}" > "${OUTPUT_ROOT}/methods.txt"
   for ((offset=0; offset<${#methods[@]}; offset++)); do
     method="${methods[$(((repeat-1+offset)%${#methods[@]}))]}"
     use_beacon=true

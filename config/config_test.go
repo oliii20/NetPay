@@ -57,3 +57,31 @@ func TestAggregationOnlyConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestDestinationAllowlistValidation(t *testing.T) {
+	for _, tc := range []struct {
+		ids       []int64
+		enabled   bool
+		consensus string
+		valid     bool
+	}{
+		{nil, true, StaticRelayConsensus, true},
+		{[]int64{}, true, StaticRelayConsensus, true},
+		{[]int64{0, 3}, true, StaticRelayConsensus, true},
+		{[]int64{4}, true, StaticRelayConsensus, false},
+		{[]int64{1, 1}, true, StaticRelayConsensus, false},
+		{[]int64{-1}, true, StaticRelayConsensus, false},
+		{[]int64{1}, false, StaticRelayConsensus, false},
+		{[]int64{1}, true, StaticBrokerConsensus, false},
+	} {
+		cfg := &Config{GlobalSys: SystemCfg{ShardNum: 4, ConsensusType: tc.consensus}, AggregationCfg: AggregationCfg{
+			Enabled: tc.enabled, DestinationShards: tc.ids, MaxWindowDurationMS: 2000, BeaconStorePath: "beacon.db",
+		}}
+		err := validateAggregationConfig(cfg)
+		if tc.valid {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+		}
+	}
+}

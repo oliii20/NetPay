@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import statistics
-from plot_common import args, read, save, plt, METHODS, LABELS, methods_for
+from plot_common import args, read, save, plt, METHODS, LABELS, methods_for, method_style
 
 
 def main():
@@ -19,7 +19,7 @@ def main():
             means = [statistics.fmean(float(r[stage])/1000 for r in rows if int(r['shards']) == shard and r['method'] == method) for shard in shards]
             ax.bar([j+(i-(len(methods)-1)/2)*width for j in range(len(shards))], means, width*.95, bottom=bottoms, color=color, label=label if i == 0 else None)
             bottoms = [a+b for a,b in zip(bottoms, means)]
-    ax.set_xticks([j+(i-(len(methods)-1)/2)*width for j in range(len(shards)) for i in range(len(methods))], [f'{s}\n{l}' for s in shards for l in [{'relay':'Relay','batch_only':'Batch','aggregation_only':'Agg','full_aggregation':'Full'}[m] for m in methods]], fontsize=9)
+    ax.set_xticks([j+(i-(len(methods)-1)/2)*width for j in range(len(shards)) for i in range(len(methods))], [f'{s}\n{l}' for s in shards for l in [method_style(m)[0] for m in methods]], fontsize=9)
     ax.set_xlabel('Number of shards / method')
     ax.set_ylabel('Mean CTX latency (s)')
     ax.legend(frameon=False, fontsize=9, loc='upper left', bbox_to_anchor=(0, 1.22))

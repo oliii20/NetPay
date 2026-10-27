@@ -3,6 +3,7 @@
 import argparse
 import csv
 import importlib.util
+import json
 import statistics
 from pathlib import Path
 
@@ -14,6 +15,12 @@ LEGACY_METHODS = ('relay', 'batch_only', 'full_aggregation')
 
 
 def methods_for(root):
+    manifest = root / 'methods.txt'
+    if manifest.exists():
+        methods = tuple(manifest.read_text().split())
+        if not methods or len(set(methods)) != len(methods) or any(m not in METHODS and not (m.startswith('hot_destination_') and m.removeprefix('hot_destination_').isdigit()) for m in methods):
+            raise ValueError(f'invalid method manifest: {manifest}')
+        return methods
     # Old three-method results remain readable; a new group must be complete.
     present = any(root.glob('repeat-*/aggregation_only')) or any(root.glob('shards-*/repeat-*/aggregation_only'))
     return METHODS if present else LEGACY_METHODS
@@ -23,8 +30,10 @@ def methods_for(root):
 def summarize(run, method, expected):
     relay = comparison.relay_lifecycles(run / 'results/relay_stats_detail_tx_info.csv')
     logical = list(relay)
+    aggregated = []
     if method != 'relay':
-        logical += comparison.aggregation_lifecycles(run / 'results/aggregation_tx_lifecycle.csv')
+        aggregated = comparison.aggregation_lifecycles(run / 'results/aggregation_tx_lifecycle.csv')
+        logical += aggregated
     if len(logical) != expected:
         raise ValueError(f'{run}: completed {len(logical)}, expected {expected}; incomplete run')
     cross = [(s, e) for s, e, ctx in logical if ctx]
@@ -40,7 +49,18 @@ def summarize(run, method, expected):
     if method != 'relay':
         with (run / 'results/aggregation_execution_metrics.csv').open(newline='') as source:
             updates += sum(int(row['ReceiverUpdateCount']) for row in csv.DictReader(source) if row['Phase'] == 'settlement')
-    return dict(method=method, completed_txs=len(logical), completed_ctx=len(cross), completion_rate=len(logical)/expected,
+    def path_stats(items):
+        latency = [(e-s)/1e6 for s,e,ctx in items if ctx]
+        return (len(latency), statistics.fmean(latency) if latency else 0., comparison.percentile(latency, .95) if latency else 0.)
+    relay_count, relay_mean, relay_p95 = path_stats(relay)
+    agg_count, agg_mean, agg_p95 = path_stats(aggregated)
+    if method.startswith('hot_destination_'):
+        selection = json.loads((run / 'selection.json').read_text())
+        if agg_count != selection['covered_ctx'] or len(cross) != selection['total_ctx']:
+            raise ValueError(f'{run}: completed route counts disagree with the selected CSV prefix')
+    return dict(relay_completed_ctx=relay_count, relay_ctx_latency_mean_ms=relay_mean, relay_ctx_latency_p95_ms=relay_p95,
+                aggregation_completed_ctx=agg_count, aggregation_ctx_latency_mean_ms=agg_mean, aggregation_ctx_latency_p95_ms=agg_p95,
+                aggregation_ctx_fraction=agg_count/len(cross), method=method, completed_txs=len(logical), completed_ctx=len(cross), completion_rate=len(logical)/expected,
                 duration_s=duration, logical_tps=len(logical)/duration, ctx_tps=len(cross)/duration,
                 latency_mean_ms=statistics.fmean(all_latencies), latency_p95_ms=comparison.percentile(all_latencies, .95),
                 ctx_latency_mean_ms=statistics.fmean(latencies), ctx_latency_p95_ms=comparison.percentile(latencies, .95),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from plot_common import args, read, save, plt, METHODS, LABELS, COLORS
+from plot_common import args, read, save, plt, methods_for, method_style
 
 
 def main():
@@ -9,7 +9,8 @@ def main():
     fig, axes = plt.subplots(len(shards), 1, figsize=(8, 2.7*len(shards)), squeeze=False)
     for ax, shard in zip(axes[:, 0], shards):
         # Each repeat is shown explicitly; do not average different drain durations.
-        for method, label, color in zip(METHODS, LABELS, COLORS):
+        for method in methods_for(rows):
+            label, color = method_style(method)
             selected = [r for r in rows if int(r['shards']) == shard and r['method'] == method]
             for i, repeat in enumerate(sorted({r['repeat'] for r in selected})):
                 series = sorted((float(r['time_s']), float(r['total_entries'])) for r in selected if r['repeat'] == repeat)

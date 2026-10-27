@@ -37,17 +37,19 @@ type ConsensusNodeCfg struct {
 }
 
 type AggregationCfg struct {
-	AggregationOnly          bool   `json:"aggregation_only" yaml:"aggregation_only"`
-	BatchOnly                bool   `json:"batch_only" yaml:"batch_only"`
-	Enabled                  bool   `json:"enabled"                               yaml:"enabled"`
-	MetricsEnabled           bool   `json:"metrics_enabled"                       yaml:"metrics_enabled"`
-	SourceAggregateAbstracts bool   `json:"source_aggregate_abstracts"            yaml:"source_aggregate_abstracts"`
-	BatchSize                int    `json:"batch_size"                            yaml:"batch_size"`
-	CreditChunkSize          int    `json:"credit_chunk_size"                     yaml:"credit_chunk_size"`
-	MaxWindowDurationMS      int64  `json:"max_window_duration_ms"                yaml:"max_window_duration_ms"`
-	BeaconStorePath          string `json:"beacon_store_path"                     yaml:"beacon_store_path"`
-	MaxAggregationWindow     uint64 `json:"max_aggregation_window"                yaml:"max_aggregation_window"`
-	MaxInjectionDurationMS   int64  `json:"max_aggregation_injection_duration_ms" yaml:"max_aggregation_injection_duration_ms"`
+	// nil aggregates every destination; a non-nil list is a fixed allowlist.
+	DestinationShards        []int64 `json:"destination_shards" yaml:"destination_shards"`
+	AggregationOnly          bool    `json:"aggregation_only" yaml:"aggregation_only"`
+	BatchOnly                bool    `json:"batch_only" yaml:"batch_only"`
+	Enabled                  bool    `json:"enabled"                               yaml:"enabled"`
+	MetricsEnabled           bool    `json:"metrics_enabled"                       yaml:"metrics_enabled"`
+	SourceAggregateAbstracts bool    `json:"source_aggregate_abstracts"            yaml:"source_aggregate_abstracts"`
+	BatchSize                int     `json:"batch_size"                            yaml:"batch_size"`
+	CreditChunkSize          int     `json:"credit_chunk_size"                     yaml:"credit_chunk_size"`
+	MaxWindowDurationMS      int64   `json:"max_window_duration_ms"                yaml:"max_window_duration_ms"`
+	BeaconStorePath          string  `json:"beacon_store_path"                     yaml:"beacon_store_path"`
+	MaxAggregationWindow     uint64  `json:"max_aggregation_window"                yaml:"max_aggregation_window"`
+	MaxInjectionDurationMS   int64   `json:"max_aggregation_injection_duration_ms" yaml:"max_aggregation_injection_duration_ms"`
 }
 
 type TxSourceCfg struct {

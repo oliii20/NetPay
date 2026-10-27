@@ -18,6 +18,7 @@ import (
 )
 
 type aggregationWorkload struct {
+	destinationShards    map[int64]bool
 	enabled              bool
 	shardCount           int64
 	chainID              uint64
@@ -47,7 +48,21 @@ func newAggregationWorkload(cfg config.AggregationCfg, shardCount, chainID int64
 		return nil, fmt.Errorf("aggregation shard count must be positive: %d", shardCount)
 	}
 
+	var destinations map[int64]bool
+	if cfg.DestinationShards != nil {
+		if !cfg.Enabled {
+			return nil, fmt.Errorf("destination allowlist requires aggregation")
+		}
+		destinations = make(map[int64]bool)
+		for _, id := range cfg.DestinationShards {
+			if id < 0 || id >= shardCount || destinations[id] {
+				return nil, fmt.Errorf("invalid or duplicate destination shard: %d", id)
+			}
+			destinations[id] = true
+		}
+	}
 	return &aggregationWorkload{
+		destinationShards:    destinations,
 		enabled:              cfg.Enabled,
 		shardCount:           shardCount,
 		chainID:              uint64(chainID),
@@ -80,7 +95,7 @@ func (n *aggregationWorkload) convert(txs []transaction.Transaction) ([]transact
 		source := partition.DefaultAccountLoc(tx.Sender, n.shardCount)
 
 		destination := partition.DefaultAccountLoc(tx.Recipient, n.shardCount)
-		if source == destination || tx.TxType() != transaction.NormalTxType ||
+		if (n.destinationShards != nil && !n.destinationShards[destination]) || source == destination || tx.TxType() != transaction.NormalTxType ||
 			!n.isAggregationWindowOpen(now) || !n.isAggregationInjectionOpen(now) {
 			converted = append(converted, tx)
 			continue

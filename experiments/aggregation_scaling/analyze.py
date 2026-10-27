@@ -69,7 +69,7 @@ def collect(root, expected):
     for group in sorted(root.glob('shards-*'), key=lambda p: int(p.name.split('-')[1])):
         shards = int(group.name.split('-')[1])
         for repeat in sorted(group.glob('repeat-*')):
-            for method in ablation.methods_for(root):
+            for method in ablation.methods_for(group):
                 run = repeat / method
                 keys = dict(shards=shards, repeat=repeat.name, method=method)
                 summary = ablation.summarize(run, method, expected)

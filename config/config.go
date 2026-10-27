@@ -76,6 +76,18 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func validateAggregationConfig(cfg *Config) error {
+	if cfg.DestinationShards != nil {
+		if !cfg.Enabled || cfg.GlobalSys.ConsensusType != StaticRelayConsensus {
+			return fmt.Errorf("static destination selection requires enabled aggregation and static_relay")
+		}
+		seen := make(map[int64]bool)
+		for _, id := range cfg.DestinationShards {
+			if id < 0 || id >= cfg.GlobalSys.ShardNum || seen[id] {
+				return fmt.Errorf("invalid or duplicate destination shard: %d", id)
+			}
+			seen[id] = true
+		}
+	}
 	if !cfg.Enabled {
 		return nil
 	}
