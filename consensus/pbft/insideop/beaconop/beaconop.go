@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"sort"
 	"time"
 
@@ -29,9 +28,6 @@ import (
 var (
 	ErrInvalidReceiptSender = errors.New("finalized receipt is not from a shard leader")
 	ErrInvalidProposal      = errors.New("invalid Beacon aggregation proposal")
-	ErrMissingReceiptData   = errors.New("aggregation receipt data is unavailable")
-	ErrAggregationHeader    = errors.New("reconstructed aggregation header mismatch")
-	ErrConflictingReceipt   = errors.New("conflicting finalized receipt")
 )
 
 type Op struct {
@@ -48,8 +44,6 @@ type Op struct {
 	metrics          *metrics.Publisher
 	receivedAt       map[merkle.Hash]time.Time
 	receiptHandledAt map[merkle.Hash]time.Time
-	receipts         map[int64]map[uint64]model.FinalizedBlockReceipt
-	prepared         map[merkle.Hash]model.AggregationBatch
 }
 
 func New(
@@ -71,8 +65,6 @@ func New(
 		metrics:          metrics.NewPublisher(false, nodeID, conn, resolver),
 		receivedAt:       make(map[merkle.Hash]time.Time),
 		receiptHandledAt: make(map[merkle.Hash]time.Time),
-		receipts:         make(map[int64]map[uint64]model.FinalizedBlockReceipt),
-		prepared:         make(map[merkle.Hash]model.AggregationBatch),
 	}
 }
 
@@ -97,12 +89,6 @@ func (o *Op) HandleMsgOutsideShard(_ context.Context, wrapped *rpcserver.Wrapped
 
 	if msg.Receipt.ShardID < 0 || msg.Receipt.ShardID >= o.shardCount {
 		return fmt.Errorf("invalid receipt shard: %d", msg.Receipt.ShardID)
-	}
-	if err := o.validator.ValidateReceipt(msg.Receipt); err != nil {
-		return fmt.Errorf("validate finalized receipt: %w", err)
-	}
-	if err := o.recordReceipt(msg.Receipt); err != nil {
-		return err
 	}
 
 	if _, exists := o.receiptHandledAt[msg.Receipt.BlockHash]; !exists {
@@ -185,7 +171,7 @@ func (o *Op) BuildProposal(context.Context) (*message.Proposal, error) {
 
 	metric.LocalValidationTime = time.Since(validationStarted)
 	metric.FrozenWindowQueueLength = o.manager.FrozenWindowCount()
-	metric.BatchProposalBytes, _ = encodedSize(message.WrapAggregationHeaderProposal(proposal.Header))
+	metric.BatchProposalBytes, _ = encodedSize(message.WrapAggregationProposal(proposal))
 
 	metric.SidecarBytes, _ = encodedSize(proposal.Sidecar)
 	metric.ProposalReadyAt = time.Now()
@@ -194,44 +180,28 @@ func (o *Op) BuildProposal(context.Context) (*message.Proposal, error) {
 	}
 
 	o.receivedAt[proposal.Header.BatchID] = time.Now()
-	o.prepared[proposal.Header.BatchID] = proposal.Clone()
 
-	return message.WrapAggregationHeaderProposal(proposal.Header), nil
+	return message.WrapAggregationProposal(proposal), nil
 }
 
 func (o *Op) ValidateProposal(_ context.Context, proposal *message.Proposal) error {
-	if proposal == nil || proposal.Block != nil || proposal.AggregationHeader == nil || proposal.AggregationBatch != nil {
+	if proposal == nil || proposal.Block != nil || proposal.AggregationBatch == nil {
 		return ErrInvalidProposal
 	}
 
-	header := *proposal.AggregationHeader
-	reconstructed, ok := o.prepared[header.BatchID]
-	if !ok || !equalAggregationHeaders(reconstructed.Header, header) {
-		var err error
-		reconstructed, err = o.reconstructBatch(header)
-		if err != nil {
-			return err
-		}
-	}
-	if err := o.validator.Validate(reconstructed); err != nil {
+	if err := o.validator.Validate(*proposal.AggregationBatch); err != nil {
 		return fmt.Errorf("validate Beacon aggregation proposal: %w", err)
 	}
-	o.prepared[header.BatchID] = reconstructed.Clone()
 
 	return nil
 }
 
 func (o *Op) ProposalCommitAndDeliver(ctx context.Context, isLeader bool, proposal *message.Proposal) error {
-	if proposal == nil || proposal.Block != nil || proposal.AggregationHeader == nil || proposal.AggregationBatch != nil {
+	if proposal == nil || proposal.AggregationBatch == nil {
 		return ErrInvalidProposal
 	}
-	header := *proposal.AggregationHeader
-	prepared, ok := o.prepared[header.BatchID]
-	if !ok || !equalAggregationHeaders(prepared.Header, header) {
-		return ErrMissingReceiptData
-	}
 
-	committed, err := o.store.Commit(prepared, time.Now())
+	committed, err := o.store.Commit(*proposal.AggregationBatch, time.Now())
 	if err != nil {
 		return fmt.Errorf("commit aggregation block: %w", err)
 	}
@@ -244,20 +214,18 @@ func (o *Op) ProposalCommitAndDeliver(ctx context.Context, isLeader bool, propos
 		}
 	}
 
-	for _, receipt := range prepared.Sidecar.Receipts {
+	for _, receipt := range proposal.AggregationBatch.Sidecar.Receipts {
 		delete(o.receiptHandledAt, receipt.BlockHash)
 	}
-	o.pruneReceipts(prepared.Header.Cuts)
 
 	if !isLeader {
-		delete(o.prepared, committed.Body.BatchID)
 		return nil
 	}
 
-	paymentIDs := batchPaymentIDs(prepared)
+	paymentIDs := batchPaymentIDs(*proposal.AggregationBatch)
 
 	finalized, err := message.WrapMsg(&message.AggregationFinalizedMsg{
-		NodeID: o.nodeID, Header: committed.Body, PaymentIDs: paymentIDs, Settlements: paymentSettlements(prepared),
+		NodeID: o.nodeID, Header: committed.Body, PaymentIDs: paymentIDs, Settlements: paymentSettlements(*proposal.AggregationBatch),
 	})
 	if err != nil {
 		return err
@@ -284,12 +252,12 @@ func (o *Op) ProposalCommitAndDeliver(ctx context.Context, isLeader bool, propos
 
 	headerDuration := time.Since(headerStarted)
 	packageStarted := time.Now()
-	if err = o.sendAggregationPackages(ctx, prepared); err != nil {
+	if err = o.sendAggregationPackages(ctx, *proposal.AggregationBatch); err != nil {
 		return err
 	}
 
 	packageDuration := time.Since(packageStarted)
-	metric, metricErr := o.buildMetric(prepared, committed)
+	metric, metricErr := o.buildMetric(*proposal.AggregationBatch, committed)
 	metric.SupervisorNotifyTime = supervisorDuration
 	metric.HeaderBroadcastTime = headerDuration
 	metric.PackageDispatchTime = packageDuration
@@ -301,97 +269,8 @@ func (o *Op) ProposalCommitAndDeliver(ctx context.Context, isLeader bool, propos
 	}
 
 	delete(o.receivedAt, committed.Body.BatchID)
-	delete(o.prepared, committed.Body.BatchID)
 
 	return nil
-}
-
-func (o *Op) recordReceipt(receipt model.FinalizedBlockReceipt) error {
-	byHeight := o.receipts[receipt.ShardID]
-	if byHeight == nil {
-		byHeight = make(map[uint64]model.FinalizedBlockReceipt)
-		o.receipts[receipt.ShardID] = byHeight
-	}
-	if existing, ok := byHeight[receipt.Height]; ok {
-		if !reflect.DeepEqual(existing, receipt) {
-			return fmt.Errorf("%w: shard %d height %d", ErrConflictingReceipt, receipt.ShardID, receipt.Height)
-		}
-		return nil
-	}
-	byHeight[receipt.Height] = receipt.Clone()
-	return nil
-}
-
-func (o *Op) reconstructBatch(header model.AggregationBatchHeader) (model.AggregationBatch, error) {
-	receipts := make([]model.FinalizedBlockReceipt, 0)
-	payments := make([]paymentmodel.CrossShardPayment, 0)
-	for _, cut := range header.Cuts {
-		if cut.ShardID < 0 || cut.ShardID >= o.shardCount || cut.EndHeight < cut.PreviousHeight {
-			return model.AggregationBatch{}, ErrInvalidProposal
-		}
-		byHeight := o.receipts[cut.ShardID]
-		for height := cut.PreviousHeight + 1; height <= cut.EndHeight; height++ {
-			receipt, ok := byHeight[height]
-			if !ok {
-				return model.AggregationBatch{}, fmt.Errorf(
-					"%w: shard %d height %d", ErrMissingReceiptData, cut.ShardID, height,
-				)
-			}
-			receipts = append(receipts, receipt.Clone())
-			for _, payment := range receipt.Payments {
-				payments = append(payments, payment.Clone())
-			}
-		}
-	}
-	sort.Slice(receipts, func(i, j int) bool {
-		if receipts[i].ShardID != receipts[j].ShardID {
-			return receipts[i].ShardID < receipts[j].ShardID
-		}
-		return receipts[i].Height < receipts[j].Height
-	})
-	type paymentWithID struct {
-		id      paymentmodel.ID
-		payment paymentmodel.CrossShardPayment
-	}
-	ordered := make([]paymentWithID, len(payments))
-	for idx, payment := range payments {
-		id, err := payment.ID()
-		if err != nil {
-			return model.AggregationBatch{}, err
-		}
-		ordered[idx] = paymentWithID{id: id, payment: payment}
-	}
-	sort.Slice(ordered, func(i, j int) bool { return bytes.Compare(ordered[i].id[:], ordered[j].id[:]) < 0 })
-	for idx := range ordered {
-		payments[idx] = ordered[idx].payment
-	}
-
-	reconstructed, err := o.builder.Build(window.FrozenWindow{
-		WindowID: header.WindowID, Cuts: append([]model.ShardCut(nil), header.Cuts...),
-		Receipts: receipts, Payments: payments,
-	}, header.PreviousBatchID)
-	if err != nil {
-		return model.AggregationBatch{}, fmt.Errorf("rebuild compact aggregation proposal: %w", err)
-	}
-	if !equalAggregationHeaders(reconstructed.Header, header) {
-		return model.AggregationBatch{}, ErrAggregationHeader
-	}
-	return reconstructed, nil
-}
-
-func equalAggregationHeaders(left, right model.AggregationBatchHeader) bool {
-	return reflect.DeepEqual(left, right)
-}
-
-func (o *Op) pruneReceipts(cuts []model.ShardCut) {
-	for _, cut := range cuts {
-		byHeight := o.receipts[cut.ShardID]
-		for height := range byHeight {
-			if height <= cut.EndHeight {
-				delete(byHeight, height)
-			}
-		}
-	}
 }
 
 func (o *Op) initializeManager() error {
@@ -514,14 +393,13 @@ func (o *Op) buildMetric(
 	proposal model.AggregationBatch,
 	committed beacon.AggregationBlock,
 ) (model.AggregationBeaconMetric, error) {
-	headerProposal := message.WrapAggregationHeaderProposal(proposal.Header)
-	digest, err := headerProposal.Hash()
+	digest, err := message.WrapAggregationProposal(proposal).Hash()
 	if err != nil {
 		return model.AggregationBeaconMetric{}, err
 	}
 
 	preprepareBytes, err := messageSize(
-		&message.PreprepareMsg{P: *headerProposal, Digest: digest},
+		&message.PreprepareMsg{P: *message.WrapAggregationProposal(proposal), Digest: digest},
 	)
 	if err != nil {
 		return model.AggregationBeaconMetric{}, err
