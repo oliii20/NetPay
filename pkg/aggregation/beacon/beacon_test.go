@@ -122,6 +122,23 @@ func TestValidationCacheChecksFullPayloadAndCommittedTip(t *testing.T) {
 	require.ErrorIs(t, validator.Validate(replayed), beacon.ErrPaymentConsumed)
 }
 
+func TestReceiptValidationCacheRequiresIdenticalContent(t *testing.T) {
+	store, err := beacon.OpenStore(filepath.Join(t.TempDir(), "beacon.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	validator := beacon.NewValidator(store, 11, 2)
+	receipt := model.FinalizedBlockReceipt{
+		ShardID: 0, Height: 1, BlockHash: testHash(2), Epoch: 1,
+		Payments: []paymentmodel.CrossShardPayment{beaconPayment()},
+	}
+	require.NoError(t, validator.ValidateReceipt(receipt))
+	require.NoError(t, validator.ValidateReceipt(receipt.Clone()))
+
+	changed := receipt.Clone()
+	changed.Payments[0].Amount = nil
+	require.ErrorIs(t, validator.ValidateReceipt(changed), beacon.ErrInvalidPayment)
+}
+
 func BenchmarkBatchValidation(b *testing.B) {
 	store, err := beacon.OpenStore(filepath.Join(b.TempDir(), "beacon.db"))
 	if err != nil {

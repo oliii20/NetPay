@@ -23,18 +23,88 @@ var (
 )
 
 type Validator struct {
-	mux          sync.Mutex
-	cached       bool
-	cachedDigest [32]byte
-	cachedTip    merkle.Hash
-	cachedHasTip bool
-	store        *Store
-	chainID      uint64
-	shardCount   int64
+	mux               sync.Mutex
+	cached            bool
+	cachedDigest      [32]byte
+	cachedTip         merkle.Hash
+	cachedHasTip      bool
+	store             *Store
+	chainID           uint64
+	shardCount        int64
+	validatedReceipts map[merkle.Hash][32]byte
 }
 
 func NewValidator(store *Store, chainID uint64, shardCount int64) *Validator {
-	return &Validator{store: store, chainID: chainID, shardCount: shardCount}
+	return &Validator{
+		store: store, chainID: chainID, shardCount: shardCount,
+		validatedReceipts: make(map[merkle.Hash][32]byte),
+	}
+}
+
+// ValidateReceipt moves payment validation off the PBFT critical path. The
+// receipt is still covered by the batch roots and replay checks when a compact
+// header is proposed.
+func (v *Validator) ValidateReceipt(receipt model.FinalizedBlockReceipt) error {
+	v.mux.Lock()
+	defer v.mux.Unlock()
+
+	if receipt.ShardID < 0 || receipt.ShardID >= v.shardCount || receipt.Height == 0 {
+		return ErrInvalidPayment
+	}
+	digest, err := receiptDigest(receipt)
+	if err != nil {
+		return err
+	}
+	if cached, ok := v.validatedReceipts[receipt.BlockHash]; ok && cached == digest {
+		return nil
+	}
+
+	seen := make(map[paymentmodel.ID]struct{})
+	for _, payment := range receipt.Payments {
+		if payment.SourceShard != receipt.ShardID {
+			return ErrInvalidPayment
+		}
+		currentEpoch := uint64(0)
+		if receipt.Epoch >= 0 {
+			currentEpoch = uint64(receipt.Epoch)
+		}
+		validationCtx := paymentmodel.ValidationContext{
+			ChainID: v.chainID, ShardID: receipt.ShardID,
+			ShardCount: v.shardCount, CurrentEpoch: currentEpoch,
+		}
+		var err error
+		if payment.SourceAggregated {
+			err = payment.ValidateSourceAbstract(validationCtx)
+		} else {
+			err = payment.Validate(validationCtx)
+		}
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidPayment, err)
+		}
+		ids, err := payment.LogicalIDs()
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if _, duplicate := seen[id]; duplicate {
+				return fmt.Errorf("%w: %x", batch.ErrDuplicatePayment, id)
+			}
+			seen[id] = struct{}{}
+		}
+	}
+
+	v.validatedReceipts[receipt.BlockHash] = digest
+	return nil
+}
+
+func receiptDigest(receipt model.FinalizedBlockReceipt) ([32]byte, error) {
+	hasher := sha256.New()
+	if err := gob.NewEncoder(hasher).Encode(receipt); err != nil {
+		return [32]byte{}, fmt.Errorf("hash finalized receipt: %w", err)
+	}
+	var digest [32]byte
+	copy(digest[:], hasher.Sum(nil))
+	return digest, nil
 }
 
 // Validate caches only successful checks of the entire encoded proposal against
@@ -139,6 +209,12 @@ func (v *Validator) validateReceiptCoverage(
 			}
 
 			parent = receipt.BlockHash
+			receiptDigest, digestErr := receiptDigest(receipt)
+			if digestErr != nil {
+				return nil, digestErr
+			}
+			cachedDigest, receiptPrevalidated := v.validatedReceipts[receipt.BlockHash]
+			receiptPrevalidated = receiptPrevalidated && cachedDigest == receiptDigest
 			for _, payment := range receipt.Payments {
 				if payment.SourceShard != receipt.ShardID {
 					return nil, ErrInvalidPayment
@@ -154,15 +230,16 @@ func (v *Validator) validateReceiptCoverage(
 					ShardCount: v.shardCount, CurrentEpoch: currentEpoch,
 				}
 
-				var validationErr error
-				if payment.SourceAggregated {
-					validationErr = payment.ValidateSourceAbstract(validationCtx)
-				} else {
-					validationErr = payment.Validate(validationCtx)
-				}
-
-				if validationErr != nil {
-					return nil, fmt.Errorf("%w: %w", ErrInvalidPayment, validationErr)
+				if !receiptPrevalidated {
+					var validationErr error
+					if payment.SourceAggregated {
+						validationErr = payment.ValidateSourceAbstract(validationCtx)
+					} else {
+						validationErr = payment.Validate(validationCtx)
+					}
+					if validationErr != nil {
+						return nil, fmt.Errorf("%w: %w", ErrInvalidPayment, validationErr)
+					}
 				}
 
 				ids, err := payment.LogicalIDs()

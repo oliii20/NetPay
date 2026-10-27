@@ -60,7 +60,8 @@ func TestFinalizationSendsDetailsOnlyToSupervisor(t *testing.T) {
 			proposal, err := (batch.Builder{BatchOnly: batchOnly, CreditChunkSize: 512}).Build(frozen, merkle.Hash{})
 			require.NoError(t, err)
 			op.receivedAt[proposal.Header.BatchID] = time.Now()
-			require.NoError(t, op.ProposalCommitAndDeliver(context.Background(), true, message.WrapAggregationProposal(proposal)))
+			op.prepared[proposal.Header.BatchID] = proposal.Clone()
+			require.NoError(t, op.ProposalCommitAndDeliver(context.Background(), true, message.WrapAggregationHeaderProposal(proposal.Header)))
 			headers, details, packages := 0, 0, 0
 			for _, record := range transport.records {
 				switch record.msg.GetMsgType() {

@@ -327,6 +327,14 @@ func (n *Node) handlePreprepare(ctx context.Context, payload []byte) error {
 		return nil
 	}
 
+	digest, err := ppMsg.P.Hash()
+	if err != nil {
+		return fmt.Errorf("hash preprepare proposal: %w", err)
+	}
+	if !bytes.Equal(digest, ppMsg.Digest) {
+		return fmt.Errorf("preprepare proposal digest mismatch")
+	}
+
 	if err := n.iop.ValidateProposal(ctx, &ppMsg.P); err != nil {
 		return fmt.Errorf("validate preprepare proposal err: %w", err)
 	}
@@ -538,6 +546,7 @@ func (n *Node) propose(ctx context.Context) error {
 
 	ppMsg := &message.PreprepareMsg{
 		P: *p, Digest: digest, Seq: n.pbftMeta.curViewSeq.Seq, View: n.pbftMeta.curViewSeq.View,
+		ShardID: n.pbftMeta.lp.ShardID, NodeID: n.pbftMeta.lp.NodeID,
 	}
 
 	if err = n.broadcastMsgInnerShard(ctx, ppMsg); err != nil {

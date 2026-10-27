@@ -41,6 +41,13 @@ func WrapAggregationProposal(proposal model.AggregationBatch) *Proposal {
 	return &Proposal{AggregationBatch: &cloned}
 }
 
+func WrapAggregationHeaderProposal(header model.AggregationBatchHeader) *Proposal {
+	cloned := header
+	cloned.Cuts = append([]model.ShardCut(nil), header.Cuts...)
+
+	return &Proposal{AggregationHeader: &cloned}
+}
+
 func getMsgType(msg any) (string, error) {
 	var msgType string
 
