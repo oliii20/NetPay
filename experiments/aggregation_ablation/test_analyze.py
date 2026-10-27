@@ -47,6 +47,20 @@ class MethodCompatibilityTest(unittest.TestCase):
             self.assertEqual(analyze.methods_for(root), analyze.METHODS)
             self.assertEqual(analyze.methods_for(root.parent / 'nonexistent-method-test'), analyze.LEGACY_METHODS)
 
+    def test_selective_method_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'methods.txt').write_text(
+                'relay\nfull_aggregation\nhot_destination_75\ncold_exclusion_20\n'
+            )
+            self.assertEqual(
+                analyze.methods_for(root),
+                ('relay', 'full_aggregation', 'hot_destination_75', 'cold_exclusion_20'),
+            )
+            (root/'methods.txt').write_text('relay\ncold_exclusion_invalid\n')
+            with self.assertRaises(ValueError):
+                analyze.methods_for(root)
+
 
 if __name__ == '__main__':
     unittest.main()

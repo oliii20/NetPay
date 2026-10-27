@@ -14,11 +14,16 @@ METHODS = ('relay', 'batch_only', 'aggregation_only', 'full_aggregation')
 LEGACY_METHODS = ('relay', 'batch_only', 'full_aggregation')
 
 
+def selective_method(method):
+    prefixes = ('hot_destination_', 'cold_exclusion_')
+    return any(method.startswith(prefix) and method.removeprefix(prefix).isdigit() for prefix in prefixes)
+
+
 def methods_for(root):
     manifest = root / 'methods.txt'
     if manifest.exists():
         methods = tuple(manifest.read_text().split())
-        if not methods or len(set(methods)) != len(methods) or any(m not in METHODS and not (m.startswith('hot_destination_') and m.removeprefix('hot_destination_').isdigit()) for m in methods):
+        if not methods or len(set(methods)) != len(methods) or any(m not in METHODS and not selective_method(m) for m in methods):
             raise ValueError(f'invalid method manifest: {manifest}')
         return methods
     # Old three-method results remain readable; a new group must be complete.
@@ -54,7 +59,7 @@ def summarize(run, method, expected):
         return (len(latency), statistics.fmean(latency) if latency else 0., comparison.percentile(latency, .95) if latency else 0.)
     relay_count, relay_mean, relay_p95 = path_stats(relay)
     agg_count, agg_mean, agg_p95 = path_stats(aggregated)
-    if method.startswith('hot_destination_'):
+    if selective_method(method):
         selection = json.loads((run / 'selection.json').read_text())
         if agg_count != selection['covered_ctx'] or len(cross) != selection['total_ctx']:
             raise ValueError(f'{run}: completed route counts disagree with the selected CSV prefix')

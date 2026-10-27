@@ -14,11 +14,12 @@ TX_NUMBER="${TX_NUMBER:-300000}"
 TX_SPEED="${TX_SPEED:-20000}"
 TX_SOURCE="${TX_SOURCE:-csv_source}"
 BLOCK_LIMIT="${BLOCK_LIMIT:-2000}"
+BLOCK_INTERVAL_MS="${BLOCK_INTERVAL_MS:-2000}"
 BATCH_SIZE="${BATCH_SIZE:-0}"
 WINDOW_MS="${WINDOW_MS:-2000}"
 CREDIT_CHUNK_SIZE="${CREDIT_CHUNK_SIZE:-512}"
 BEACON_INTERVAL_MS="${BEACON_INTERVAL_MS:-2000}"
-for parameter in WINDOW_MS CREDIT_CHUNK_SIZE BEACON_INTERVAL_MS; do
+for parameter in BLOCK_LIMIT BLOCK_INTERVAL_MS WINDOW_MS CREDIT_CHUNK_SIZE BEACON_INTERVAL_MS; do
   value="${!parameter}"
   if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
     echo "${parameter} must be a positive integer" >&2
@@ -46,8 +47,8 @@ with socket.socket() as probe:
     probe.bind(('127.0.0.1', 0))
 PYCODE
 mkdir -p "${BIN_DIR}"
-if [[ "${METHODS:-}" == *hot_destination_* ]]; then
-  [[ "${TX_SOURCE}" == csv_source ]] || { echo "hot destination requires historical CSV dataset" >&2; exit 1; }
+if [[ "${METHODS:-}" == *hot_destination_* || "${METHODS:-}" == *cold_exclusion_* ]]; then
+  [[ "${TX_SOURCE}" == csv_source ]] || { echo "destination selection requires historical CSV dataset" >&2; exit 1; }
   GOCACHE="${GOCACHE:-/tmp/block-emulator-x-comparison-cache}" go run ./cmd/hotdestinations -shards="${SHARD_NUM}" -tx-number="${TX_NUMBER}" -output="${OUTPUT_ROOT}/destination_ranking.json"
 fi
 GOCACHE="${GOCACHE:-/tmp/block-emulator-x-comparison-cache}" go build -o "${BIN_DIR}/consensusnode" ./cmd/consensusnode
@@ -63,18 +64,30 @@ run_case() {
   local process_log_dir="${run_dir}/process_logs"
   local template_method="${method}"
   [[ "${method}" == hot_destination_* ]] && template_method=full_aggregation
+  [[ "${method}" == cold_exclusion_* ]] && template_method=full_aggregation
 
   if [[ -e "${run_dir}" ]]; then echo "output already exists: ${run_dir}; set OUTPUT_ROOT to a new path" >&2; return 1; fi
   mkdir -p "${process_log_dir}"
   sed -e "s|__RUN_DIR__|${run_dir}|g" -e "s|__TX_NUMBER__|${TX_NUMBER}|g" -e "s|__TX_SPEED__|${TX_SPEED}|g" -e "s|__TX_SOURCE__|${TX_SOURCE}|g" -e "s|__BLOCK_LIMIT__|${BLOCK_LIMIT}|g" \
     "experiments/aggregation_ablation/${template_method}.yaml.tmpl" | \
     sed -e "s/^  shard_num: 4$/  shard_num: ${SHARD_NUM}/" -e "s/^  node_num: 4$/  node_num: ${NODE_NUM}/" -e "s/^  batch_size: 0$/  batch_size: ${BATCH_SIZE}/" \
+      -e "s/^  block_interval: 2000$/  block_interval: ${BLOCK_INTERVAL_MS}/" \
       -e "s/^  max_window_duration_ms: 2000$/  max_window_duration_ms: ${WINDOW_MS}/" \
       -e "s/^  credit_chunk_size: 512$/  credit_chunk_size: ${CREDIT_CHUNK_SIZE}/" \
       -e "s/__BEACON_INTERVAL_MS__/${BEACON_INTERVAL_MS}/g" > "${config_path}"
 
   if [[ "${method}" == hot_destination_* ]]; then
     python3 experiments/aggregation_hot_destination/select_destinations.py --ranking "${OUTPUT_ROOT}/destination_ranking.json" --percent "${method#hot_destination_}" --config "${config_path}" --output "${run_dir}/selection.json"
+  fi
+  if [[ "${method}" == cold_exclusion_* ]]; then
+    python3 experiments/aggregation_cold_destination/select_destinations.py \
+      --ranking "${OUTPUT_ROOT}/destination_ranking.json" \
+      --threshold-percent "${method#cold_exclusion_}" \
+      --injection-speed "${TX_SPEED}" \
+      --block-limit "${BLOCK_LIMIT}" \
+      --block-interval-ms "${BLOCK_INTERVAL_MS}" \
+      --config "${config_path}" \
+      --output "${run_dir}/selection.json"
   fi
 
   PROCESS_IDS=()

@@ -18,10 +18,14 @@ def methods_for(rows):
     present = {r['method'] for r in rows}
     extra = sorted(present - set(METHODS))
     for method in extra:
-        if not method.startswith('hot_destination_'):
+        if method.startswith('hot_destination_'):
+            label = f'Hot destinations {method.rsplit("_", 1)[1]}%'
+        elif method.startswith('cold_exclusion_'):
+            label = f'Cold cutoff {method.rsplit("_", 1)[1]}% capacity'
+        else:
             raise ValueError(f'unknown method: {method}')
         METHODS += (method,)
-        LABELS += (f'Hot destinations {method.rsplit("_", 1)[1]}%',)
+        LABELS += (label,)
         COLORS += (plt.get_cmap('tab10')(len(METHODS) % 10),)
     return [m for m in METHODS if m in present]
 
