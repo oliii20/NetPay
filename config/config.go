@@ -76,18 +76,27 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func validateAggregationConfig(cfg *Config) error {
+	if cfg.AdaptiveRouting.Enabled {
+		if err := validateAdaptiveRoutingConfig(cfg); err != nil {
+			return err
+		}
+	}
+
 	if cfg.DestinationShards != nil {
 		if !cfg.Enabled || cfg.GlobalSys.ConsensusType != StaticRelayConsensus {
 			return fmt.Errorf("static destination selection requires enabled aggregation and static_relay")
 		}
+
 		seen := make(map[int64]bool)
 		for _, id := range cfg.DestinationShards {
 			if id < 0 || id >= cfg.GlobalSys.ShardNum || seen[id] {
 				return fmt.Errorf("invalid or duplicate destination shard: %d", id)
 			}
+
 			seen[id] = true
 		}
 	}
+
 	if !cfg.Enabled {
 		return nil
 	}
@@ -103,12 +112,15 @@ func validateAggregationConfig(cfg *Config) error {
 	if cfg.AggregationOnly && cfg.BatchOnly {
 		return fmt.Errorf("aggregation_only and batch_only are mutually exclusive")
 	}
+
 	if cfg.AggregationOnly && cfg.SourceAggregateAbstracts {
 		return fmt.Errorf("aggregation_only requires source_aggregate_abstracts=false")
 	}
+
 	if cfg.AggregationOnly {
 		cfg.CreditChunkSize = 1
 	}
+
 	if cfg.BatchOnly && cfg.SourceAggregateAbstracts {
 		return fmt.Errorf("batch_only requires source_aggregate_abstracts=false")
 	}

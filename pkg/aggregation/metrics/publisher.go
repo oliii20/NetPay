@@ -34,6 +34,14 @@ func (p *Publisher) PublishBeacon(ctx context.Context, metric model.AggregationB
 	return p.publish(ctx, &message.AggregationBeaconMetricMsg{NodeID: p.nodeID, Metric: metric})
 }
 
+func (p *Publisher) PublishSourceMetrics(ctx context.Context, records []model.AggregationExecutionMetric) error {
+	if len(records) == 0 {
+		return nil
+	}
+
+	return p.publish(ctx, &message.AggregationExecutionMetricMsg{NodeID: p.nodeID, Metrics: records})
+}
+
 func (p *Publisher) PublishCommittedBlock(
 	ctx context.Context,
 	shardID int64,
@@ -105,6 +113,7 @@ func blockMeasurements(
 
 			receiptCount := 0
 			accounts := make(map[[20]byte]struct{})
+
 			for _, credit := range aggregation.Credits {
 				receiptCount += int(credit.ReceiptCount)
 				accounts[[20]byte(credit.Recipient)] = struct{}{}
@@ -113,8 +122,10 @@ func blockMeasurements(
 			measurements = append(measurements, model.AggregationExecutionMetric{
 				Phase: model.MetricPhaseSettlement, BatchID: aggregation.BatchID,
 				WindowID: aggregation.WindowID, ShardID: shardID, ChunkIndex: aggregation.ChunkIndex,
-				ItemCount:           receiptCount,
-				ReceiverUpdateCount: len(aggregation.Credits), UniqueAccountCount: len(accounts), CreatedAt: tx.CreateTime,
+				ItemCount: receiptCount,
+				ReceiverUpdateCount: len(
+					aggregation.Credits,
+				), UniqueAccountCount: len(accounts), CreatedAt: tx.CreateTime,
 				CommittedAt: committedAt, StateReadCount: 1,
 				StateWriteCount: int64(len(aggregation.Credits) + 1),
 			})

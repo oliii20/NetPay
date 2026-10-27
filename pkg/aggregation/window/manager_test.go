@@ -115,6 +115,21 @@ func TestManagerClosesAtBatchSize(t *testing.T) {
 	require.Zero(t, manager.PendingPaymentCount())
 }
 
+func TestFrozenWaitExcludesCollectionAndActiveConsensus(t *testing.T) {
+	clock := newFakeClock()
+	manager := newManager(t, window.Config{ShardCount: 2, BatchSize: 1, MaxWindowDuration: time.Minute}, clock)
+	require.Zero(t, manager.QueuedFrozenWait(clock.Now(), 0))
+	_, err := manager.AddReceipt(testReceipt(0, 2, testHash(0x10), testHash(0x11), 1))
+	require.NoError(t, err)
+	clock.Advance(3 * time.Second)
+	require.Equal(t, 3*time.Second, manager.QueuedFrozenWait(clock.Now(), 0))
+	require.Zero(t, manager.QueuedFrozenWait(clock.Now(), 1), "in-flight consensus is not queued work")
+	_, err = manager.AddReceipt(testReceipt(0, 3, testHash(0x11), testHash(0x12), 2))
+	require.NoError(t, err)
+	clock.Advance(time.Second)
+	require.Equal(t, time.Second, manager.QueuedFrozenWait(clock.Now(), 1))
+}
+
 func TestManagerDisablesBatchSizeCloseWhenUnset(t *testing.T) {
 	t.Parallel()
 

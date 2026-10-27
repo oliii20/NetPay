@@ -1,5 +1,11 @@
 # Beacon-coordinated cross-shard aggregation
 
+The optional adaptive routing mode uses ordinary source transactions and selects
+Relay2 versus aggregation only after source-block commitment. See
+[the adaptive design and implementation](adaptive-aggregation-routing.md) and
+`experiments/adaptive_aggregation/run.py`. The original mode below is retained
+for reproducing the earlier static experiments.
+
 When `aggregation.enabled` is true, every cross-shard native transfer follows
 this path:
 

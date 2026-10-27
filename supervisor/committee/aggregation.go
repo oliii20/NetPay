@@ -18,6 +18,7 @@ import (
 )
 
 type aggregationWorkload struct {
+	adaptive             bool
 	destinationShards    map[int64]bool
 	enabled              bool
 	shardCount           int64
@@ -49,19 +50,24 @@ func newAggregationWorkload(cfg config.AggregationCfg, shardCount, chainID int64
 	}
 
 	var destinations map[int64]bool
+
 	if cfg.DestinationShards != nil {
 		if !cfg.Enabled {
 			return nil, fmt.Errorf("destination allowlist requires aggregation")
 		}
+
 		destinations = make(map[int64]bool)
 		for _, id := range cfg.DestinationShards {
 			if id < 0 || id >= shardCount || destinations[id] {
 				return nil, fmt.Errorf("invalid or duplicate destination shard: %d", id)
 			}
+
 			destinations[id] = true
 		}
 	}
+
 	return &aggregationWorkload{
+		adaptive:             cfg.AdaptiveRouting.Enabled,
 		destinationShards:    destinations,
 		enabled:              cfg.Enabled,
 		shardCount:           shardCount,
@@ -84,6 +90,39 @@ func (n *aggregationWorkload) convert(txs []transaction.Transaction) ([]transact
 		return txs, nil
 	}
 
+	if n.adaptive {
+		// Keep every original envelope intact. Only source post-commit delivery
+		// decides whether it becomes Relay2 or enters a Beacon receipt.
+		for _, tx := range txs {
+			if tx.TxType() != transaction.NormalTxType ||
+				partition.DefaultAccountLoc(
+					tx.Sender,
+					n.shardCount,
+				) == partition.DefaultAccountLoc(
+					tx.Recipient,
+					n.shardCount,
+				) {
+				continue
+			}
+
+			hash, err := tx.Hash()
+			if err != nil {
+				return nil, fmt.Errorf("hash original adaptive transaction: %w", err)
+			}
+
+			var id paymentmodel.ID
+			copy(id[:], hash)
+
+			if _, exists := n.injected[id]; exists {
+				return nil, fmt.Errorf("duplicate injected original transaction")
+			}
+
+			n.injected[id] = struct{}{}
+		}
+
+		return txs, nil
+	}
+
 	converted := make([]transaction.Transaction, 0, len(txs))
 
 	now := n.now()
@@ -95,8 +134,10 @@ func (n *aggregationWorkload) convert(txs []transaction.Transaction) ([]transact
 		source := partition.DefaultAccountLoc(tx.Sender, n.shardCount)
 
 		destination := partition.DefaultAccountLoc(tx.Recipient, n.shardCount)
-		if (n.destinationShards != nil && !n.destinationShards[destination]) || source == destination || tx.TxType() != transaction.NormalTxType ||
-			!n.isAggregationWindowOpen(now) || !n.isAggregationInjectionOpen(now) {
+		if (n.destinationShards != nil && !n.destinationShards[destination]) || source == destination ||
+			tx.TxType() != transaction.NormalTxType ||
+			!n.isAggregationWindowOpen(now) ||
+			!n.isAggregationInjectionOpen(now) {
 			converted = append(converted, tx)
 			continue
 		}
@@ -226,4 +267,23 @@ func (n *aggregationWorkload) completeSettledBatch(batchID merkle.Hash) {
 
 func (n *aggregationWorkload) finished() bool {
 	return !n.enabled || len(n.completed) == len(n.injected)
+}
+
+func (n *aggregationWorkload) handleRelayed(txs []transaction.Transaction) {
+	if !n.adaptive {
+		return
+	}
+
+	for _, tx := range txs {
+		if tx.RelayStage != transaction.Relay2Tx || len(tx.ROriginalHash) != len(paymentmodel.ID{}) {
+			continue
+		}
+
+		var id paymentmodel.ID
+		copy(id[:], tx.ROriginalHash)
+
+		if _, exists := n.injected[id]; exists {
+			n.completed[id] = struct{}{}
+		}
+	}
 }

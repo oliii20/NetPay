@@ -15,6 +15,7 @@ import (
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/model"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/routing"
 	paymentmodel "github.com/HuangLab-SYSU/block-emulator-x/pkg/core/payment"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/csvwrite"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
@@ -25,6 +26,7 @@ const (
 	BatchMetricsFile     = "aggregation_batch_metrics.csv"
 	ExecutionMetricsFile = "aggregation_execution_metrics.csv"
 	LifecycleMetricsFile = "aggregation_tx_lifecycle.csv"
+	RoutingMetricsFile   = "aggregation_routing_policy.csv"
 )
 
 var batchHeaders = []string{
@@ -56,6 +58,7 @@ type batchRecord struct {
 }
 
 type Collector struct {
+	routingPolicies      map[uint64]routing.Policy
 	outputDir            string
 	mu                   sync.Mutex
 	batches              map[merkle.Hash]*batchRecord
@@ -73,6 +76,7 @@ type Collector struct {
 
 func New(outputDir string) *Collector {
 	return &Collector{
+		routingPolicies:      make(map[uint64]routing.Policy),
 		outputDir:            outputDir,
 		paymentSettlements:   make(map[merkle.Hash][]message.PaymentSettlement),
 		appliedChunks:        make(map[string]time.Time),
@@ -92,6 +96,17 @@ func (c *Collector) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 	defer c.mu.Unlock()
 
 	switch wrapped.GetMsgType() {
+	case message.AggregationRoutingPolicyMessageType:
+		var msg message.AggregationRoutingPolicyMsg
+		if err := decode(wrapped, &msg); err != nil {
+			return err
+		}
+
+		if msg.NodeID != 0 {
+			return fmt.Errorf("routing metric not from Beacon leader")
+		}
+
+		c.routingPolicies[msg.Policy.Version] = msg.Policy.Clone()
 	case message.AggregationBatchMetricMessageType:
 		var msg message.AggregationBatchMetricMsg
 		if err := decode(wrapped, &msg); err != nil {
@@ -151,6 +166,7 @@ func (c *Collector) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 		}
 
 		c.paymentSettlements[msg.Header.BatchID] = msg.Settlements
+
 		c.batchPayments[msg.Header.BatchID] = append([]paymentmodel.ID(nil), msg.PaymentIDs...)
 		for _, id := range msg.PaymentIDs {
 			c.paymentBatch[id] = msg.Header.BatchID
@@ -200,6 +216,10 @@ func (c *Collector) OutputResultAndClose() error {
 		return fmt.Errorf("write aggregation lifecycle metrics: %w", err)
 	}
 
+	if err := c.writeRoutingPolicies(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -211,8 +231,10 @@ func (c *Collector) reconcileBatch(batchID merkle.Hash) {
 				c.completedAt[assignment.PaymentID] = committedAt
 			}
 		}
+
 		return
 	}
+
 	ids, exists := c.batchPayments[batchID]
 	if !exists || c.batchAppliedReceipts[batchID] < len(ids) || c.batchCommittedAt[batchID].IsZero() {
 		return
@@ -269,14 +291,32 @@ func (c *Collector) batchRows() [][]string {
 			), strconv.FormatInt(beacon.BeaconConsensusLatency.Nanoseconds(), 10),
 			strconv.Itoa(beacon.PreprepareBytes), strconv.Itoa(beacon.PrepareBytes), strconv.Itoa(beacon.CommitBytes),
 			strconv.Itoa(beacon.BatchStorageBytes), strconv.FormatInt(beacon.FinalizedAt.UnixNano(), 10),
-			strconv.FormatInt(batch.WindowOpenedAt.UnixNano(), 10), strconv.FormatInt(batch.WindowSealedAt.UnixNano(), 10),
-			strconv.FormatInt(batch.BuildStartedAt.UnixNano(), 10), strconv.FormatInt(batch.ProposalReadyAt.UnixNano(), 10),
-			strconv.FormatInt(batch.FrozenQueueWait.Nanoseconds(), 10), strconv.FormatInt(batch.BuildTime.Nanoseconds(), 10),
+			strconv.FormatInt(
+				batch.WindowOpenedAt.UnixNano(),
+				10,
+			), strconv.FormatInt(batch.WindowSealedAt.UnixNano(), 10),
+			strconv.FormatInt(
+				batch.BuildStartedAt.UnixNano(),
+				10,
+			), strconv.FormatInt(batch.ProposalReadyAt.UnixNano(), 10),
+			strconv.FormatInt(
+				batch.FrozenQueueWait.Nanoseconds(),
+				10,
+			), strconv.FormatInt(batch.BuildTime.Nanoseconds(), 10),
 			strconv.FormatInt(batch.LocalValidationTime.Nanoseconds(), 10), strconv.Itoa(batch.FrozenWindowQueueLength),
-			strconv.FormatInt(batch.ReceiptTimingCount, 10), strconv.FormatInt(batch.SourceToHandlerMean.Nanoseconds(), 10),
+			strconv.FormatInt(
+				batch.ReceiptTimingCount,
+				10,
+			), strconv.FormatInt(batch.SourceToHandlerMean.Nanoseconds(), 10),
 			strconv.FormatInt(batch.HandlerToBuildMean.Nanoseconds(), 10),
-			strconv.FormatInt(beacon.SupervisorNotifyTime.Nanoseconds(), 10), strconv.FormatInt(beacon.HeaderBroadcastTime.Nanoseconds(), 10),
-			strconv.FormatInt(beacon.PackageDispatchTime.Nanoseconds(), 10), strconv.FormatInt(beacon.CommitDeliveryTime.Nanoseconds(), 10),
+			strconv.FormatInt(
+				beacon.SupervisorNotifyTime.Nanoseconds(),
+				10,
+			), strconv.FormatInt(beacon.HeaderBroadcastTime.Nanoseconds(), 10),
+			strconv.FormatInt(
+				beacon.PackageDispatchTime.Nanoseconds(),
+				10,
+			), strconv.FormatInt(beacon.CommitDeliveryTime.Nanoseconds(), 10),
 		})
 	}
 

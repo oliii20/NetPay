@@ -1,0 +1,15 @@
+{
+  "expected": 4000,
+  "completed_originals": 4000,
+  "duplicate_originals": 0,
+  "aggregation_originals": 1453,
+  "relay_and_inner_originals": 2547,
+  "policy_versions": 3,
+  "block_counters": {
+    "Relay1TxCount": 2965,
+    "Relay2TxCount": 1512,
+    "CrossShardPaymentTxCount": 0,
+    "AggregationSettlementTxCount": 60
+  },
+  "warning_error_count": 0
+}

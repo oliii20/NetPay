@@ -1,5 +1,7 @@
 package config
 
+import "github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/routing"
+
 const (
 	StaticRelayConsensus  = "static_relay"
 	StaticBrokerConsensus = "static_broker"
@@ -37,10 +39,11 @@ type ConsensusNodeCfg struct {
 }
 
 type AggregationCfg struct {
+	AdaptiveRouting routing.Config `json:"adaptive_routing"                      yaml:"adaptive_routing"`
 	// nil aggregates every destination; a non-nil list is a fixed allowlist.
-	DestinationShards        []int64 `json:"destination_shards" yaml:"destination_shards"`
-	AggregationOnly          bool    `json:"aggregation_only" yaml:"aggregation_only"`
-	BatchOnly                bool    `json:"batch_only" yaml:"batch_only"`
+	DestinationShards        []int64 `json:"destination_shards"                    yaml:"destination_shards"`
+	AggregationOnly          bool    `json:"aggregation_only"                      yaml:"aggregation_only"`
+	BatchOnly                bool    `json:"batch_only"                            yaml:"batch_only"`
 	Enabled                  bool    `json:"enabled"                               yaml:"enabled"`
 	MetricsEnabled           bool    `json:"metrics_enabled"                       yaml:"metrics_enabled"`
 	SourceAggregateAbstracts bool    `json:"source_aggregate_abstracts"            yaml:"source_aggregate_abstracts"`

@@ -64,6 +64,10 @@ func (s *StaticRelayCommittee) SendTxsAndConsensus(ctx context.Context) error {
 }
 
 func (s *StaticRelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.WrappedMsg) error {
+	if msg.GetMsgType() == message.AggregationRoutingPolicyMessageType {
+		return nil
+	}
+
 	if msg.GetMsgType() == message.AggregationFinalizedMessageType {
 		return s.aggregation.handleFinalized(msg)
 	}
@@ -93,6 +97,8 @@ func (s *StaticRelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.Wrapp
 	if err := gob.NewDecoder(bytes.NewReader(msg.GetPayload())).Decode(&bInfo); err != nil {
 		return fmt.Errorf("decode relayBlockInfoMsg: %w", err)
 	}
+
+	s.aggregation.handleRelayed(bInfo.Relay2Txs)
 
 	if s.unsentTxNum <= 0 && s.aggregation.finished() &&
 		len(bInfo.InnerShardTxs)+len(bInfo.Relay1Txs)+len(bInfo.Relay2Txs) == 0 {

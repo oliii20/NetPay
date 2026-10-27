@@ -10,6 +10,8 @@ import (
 
 	"github.com/HuangLab-SYSU/block-emulator-x/config"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/merkle"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/model"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/routing"
 	paymentmodel "github.com/HuangLab-SYSU/block-emulator-x/pkg/core/payment"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/message"
 )
@@ -83,4 +85,42 @@ func TestStaticDestinationRoutesMixedPayments(t *testing.T) {
 		_, err = newAggregationWorkload(config.AggregationCfg{Enabled: true, DestinationShards: ids}, 4, 11)
 		require.Error(t, err)
 	}
+}
+
+func TestAdaptiveMixedCompletionDoesNotStopEarly(t *testing.T) {
+	var sender, first, second [20]byte
+	sender[19], first[19], second[19] = 4, 1, 2
+	w, err := newAggregationWorkload(config.AggregationCfg{Enabled: true, AdaptiveRouting: routing.Config{Enabled: true}}, 4, 11)
+	require.NoError(t, err)
+	txs := []transaction.Transaction{
+		*transaction.NewTransaction(sender, first, big.NewInt(2), big.NewInt(0), 1, time.Now()),
+		*transaction.NewTransaction(sender, second, big.NewInt(3), big.NewInt(0), 2, time.Now()),
+	}
+	converted, err := w.convert(txs)
+	require.NoError(t, err)
+	require.Equal(t, txs, converted, "no upfront conversion or route marking")
+	var ids [2]paymentmodel.ID
+	for i := range txs {
+		h, hashErr := txs[i].Hash()
+		require.NoError(t, hashErr)
+		copy(ids[i][:], h)
+	}
+	require.False(t, w.finished())
+	r2 := txs[0]
+	r2.RelayStage, r2.ROriginalHash = transaction.Relay2Tx, ids[0][:]
+	w.handleRelayed([]transaction.Transaction{r2, r2})
+	require.False(t, w.finished(), "must still wait for aggregation settlement")
+	batchID := merkle.Hash{1}
+	applied, err := message.WrapMsg(&message.AggregationAppliedMsg{Chunks: []message.AggregationApplied{
+		{BatchID: batchID, ShardID: 2, ChunkIndex: 0, ReceiptCount: 1},
+	}})
+	require.NoError(t, err)
+	require.NoError(t, w.handleApplied(applied))
+	require.False(t, w.finished(), "applied-before-finalized must reconcile later")
+	finalized, err := message.WrapMsg(&message.AggregationFinalizedMsg{Header: model.AggregationBatchHeader{BatchID: batchID}, PaymentIDs: []paymentmodel.ID{ids[1]}})
+	require.NoError(t, err)
+	require.NoError(t, w.handleFinalized(finalized))
+	require.NoError(t, w.handleFinalized(finalized))
+	require.True(t, w.finished())
+	require.Len(t, w.completed, 2)
 }

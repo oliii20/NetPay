@@ -89,7 +89,7 @@ func NewSupervisor(conn *network.ConnHandler, r nodetopo.NodeMapper, cfg config.
 		return nil, fmt.Errorf("undefined consensus type: %s", cfg.ConsensusType)
 	}
 
-	if cfg.AggregationCfg.Enabled && cfg.AggregationCfg.MetricsEnabled {
+	if cfg.AggregationCfg.Enabled && (cfg.AggregationCfg.MetricsEnabled || cfg.AggregationCfg.AdaptiveRouting.Enabled) {
 		ms = measure.NewRouter(ms, aggregationstats.New(cfg.ResultOutputDir))
 	}
 

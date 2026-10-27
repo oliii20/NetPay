@@ -47,29 +47,38 @@ func (v *Validator) Validate(proposal model.AggregationBatch) error {
 	if err := gob.NewEncoder(hasher).Encode(proposal); err != nil {
 		return fmt.Errorf("hash validation proposal: %w", err)
 	}
+
 	var digest [32]byte
 	copy(digest[:], hasher.Sum(nil))
 
-	return v.store.validationSnapshot(func(tip AggregationBlock, hasTip bool, hasPayment func(paymentmodel.ID) bool) error {
-		if v.cached && digest == v.cachedDigest && hasTip == v.cachedHasTip && tip.Body.BatchID == v.cachedTip {
+	return v.store.validationSnapshot(
+		func(tip AggregationBlock, hasTip bool, hasPayment func(paymentmodel.ID) bool) error {
+			if v.cached && digest == v.cachedDigest && hasTip == v.cachedHasTip && tip.Body.BatchID == v.cachedTip {
+				return nil
+			}
+
+			if err := validateSequence(proposal.Header, tip, hasTip); err != nil {
+				return err
+			}
+
+			payments, err := v.validateReceiptCoverage(proposal, tip, hasTip, hasPayment)
+			if err != nil {
+				return err
+			}
+
+			if len(payments) == 0 {
+				return batch.ErrEmptyWindow
+			}
+
+			if err = batch.VerifyBatch(proposal); err != nil {
+				return fmt.Errorf("verify aggregation batch: %w", err)
+			}
+
+			v.cached, v.cachedDigest, v.cachedTip, v.cachedHasTip = true, digest, tip.Body.BatchID, hasTip
+
 			return nil
-		}
-		if err := validateSequence(proposal.Header, tip, hasTip); err != nil {
-			return err
-		}
-		payments, err := v.validateReceiptCoverage(proposal, tip, hasTip, hasPayment)
-		if err != nil {
-			return err
-		}
-		if len(payments) == 0 {
-			return batch.ErrEmptyWindow
-		}
-		if err = batch.VerifyBatch(proposal); err != nil {
-			return fmt.Errorf("verify aggregation batch: %w", err)
-		}
-		v.cached, v.cachedDigest, v.cachedTip, v.cachedHasTip = true, digest, tip.Body.BatchID, hasTip
-		return nil
-	})
+		},
+	)
 }
 
 func validateSequence(header model.AggregationBatchHeader, tip AggregationBlock, hasTip bool) error {

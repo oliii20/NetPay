@@ -117,13 +117,16 @@ func (s *Store) HasPayment(id paymentmodel.ID) (bool, error) {
 func (s *Store) validationSnapshot(fn func(AggregationBlock, bool, func(paymentmodel.ID) bool) error) error {
 	return s.db.View(func(tx *bbolt.Tx) error {
 		var tip AggregationBlock
+
 		encoded := tx.Bucket(metaBucket).Get(tipKey)
 		if len(encoded) > 0 {
 			if err := decode(encoded, &tip); err != nil {
 				return fmt.Errorf("decode validation tip: %w", err)
 			}
 		}
+
 		consumed := tx.Bucket(consumedBucket)
+
 		return fn(tip, len(encoded) > 0, func(id paymentmodel.ID) bool {
 			return consumed.Get(id[:]) != nil
 		})

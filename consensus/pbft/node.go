@@ -170,7 +170,12 @@ func NewPBFTNode(
 	}
 
 	if cfg.AggregationCfg.Enabled {
-		omh = outsideop.NewAggregationOutsideOp(omh, settlement.NewInbox(lp.ShardID, bc, txp))
+		aggregationHandler := outsideop.NewAggregationOutsideOp(omh, settlement.NewInbox(lp.ShardID, bc, txp))
+		if relay, ok := tbo.(*txblockop.RelayTxBlockOp); ok {
+			aggregationHandler.SetRoutingTable(relay.RoutingTable())
+		}
+
+		omh = aggregationHandler
 	}
 
 	return &Node{

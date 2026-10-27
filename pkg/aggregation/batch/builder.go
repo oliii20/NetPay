@@ -136,6 +136,7 @@ func summarizeMetric(
 	if proposal.Header.BatchOnly {
 		metric.CreditCount = receiptCount
 	}
+
 	metric.CollapsedReceiptCount = metric.ReceiptCount - metric.CreditCount
 	metric.OriginalValue = original.String()
 	metric.AggregatedValue = original.String()
@@ -229,8 +230,10 @@ func buildAggregations(
 			if payment.SourceAggregated {
 				return nil, fmt.Errorf("batch-only requires unmerged source payments")
 			}
+
 			key.PaymentID = ids[0]
 		}
+
 		group := groups[key]
 		if group == nil {
 			group = &creditAccumulator{Amount: new(big.Int)}
@@ -588,11 +591,13 @@ func AggregationPayload(aggregation model.ShardAggregation) ([]byte, error) {
 	writeUint64(&out, uint64(aggregation.ShardID))
 	writeUint32(&out, aggregation.ChunkIndex)
 	writeUint32(&out, aggregation.ChunkCount)
+
 	if aggregation.BatchOnly {
 		writeUint32(&out, 1)
 	} else {
 		writeUint32(&out, 0)
 	}
+
 	writeUint32(&out, uint32(len(aggregation.Credits)))
 
 	for _, credit := range aggregation.Credits {
@@ -678,6 +683,7 @@ func sortCredits(credits []model.AggregatedCredit) {
 		if cmp := bytes.Compare(credits[i].Recipient[:], credits[j].Recipient[:]); cmp != 0 {
 			return cmp < 0
 		}
+
 		return bytes.Compare(credits[i].ReceiptRoot[:], credits[j].ReceiptRoot[:]) < 0
 	})
 }

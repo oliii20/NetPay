@@ -10,6 +10,7 @@ import (
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/completion"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/metrics"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/receipt"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/routing"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/chain"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/block"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/core/transaction"
@@ -20,6 +21,7 @@ import (
 
 // RelayTxBlockOp is the TxBlockOp which can handle relay transactions.
 type RelayTxBlockOp struct {
+	routes     *routing.Table
 	c          *chain.Chain
 	conn       *network.ConnHandler
 	resolver   nodetopo.NodeMapper
@@ -38,7 +40,7 @@ func NewRelayTxBlockOp(
 	cfg config.ConsensusNodeCfg,
 	lp config.LocalParams,
 ) *RelayTxBlockOp {
-	return &RelayTxBlockOp{
+	op := &RelayTxBlockOp{
 		c:        c,
 		conn:     conn,
 		resolver: rs,
@@ -52,7 +54,14 @@ func NewRelayTxBlockOp(
 		cfg: cfg,
 		lp:  lp,
 	}
+	if cfg.AggregationCfg.AdaptiveRouting.Enabled {
+		op.routes = routing.NewTable(cfg.ShardNum)
+	}
+
+	return op
 }
+
+func (r *RelayTxBlockOp) RoutingTable() *routing.Table { return r.routes }
 
 func (r *RelayTxBlockOp) BuildTxBlockProposal(
 	ctx context.Context,
@@ -92,6 +101,10 @@ func (r *RelayTxBlockOp) BlockCommitAndDeliver(ctx context.Context, isLeader boo
 	}
 
 	committedAt := time.Now()
+	if r.routes != nil {
+		return r.deliverAdaptive(ctx, b, committedAt)
+	}
+
 	if err := r.receipts.Publish(ctx, r.c.GetShardID(), r.c.GetEpochID(), b, committedAt); err != nil {
 		return fmt.Errorf("publish finalized block receipt: %w", err)
 	}

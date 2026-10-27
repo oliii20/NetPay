@@ -197,6 +197,18 @@ func (m *Manager) FrozenWindowCount() int {
 	return len(m.frozen)
 }
 
+// QueuedFrozenWait excludes the window already building/in consensus. Normal
+// collection time before SealedAt is never interpreted as congestion.
+func (m *Manager) QueuedFrozenWait(now time.Time, activeWindow uint64) time.Duration {
+	for _, frozen := range m.frozen {
+		if frozen.WindowID != activeWindow {
+			return max(time.Duration(0), now.Sub(frozen.SealedAt))
+		}
+	}
+
+	return 0
+}
+
 func (m *Manager) Watermark(shardID int64) (Watermark, error) {
 	stream, exists := m.streams[shardID]
 	if !exists {

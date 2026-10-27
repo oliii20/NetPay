@@ -5,10 +5,12 @@ import (
 
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/merkle"
 	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/model"
+	"github.com/HuangLab-SYSU/block-emulator-x/pkg/aggregation/routing"
 	paymentmodel "github.com/HuangLab-SYSU/block-emulator-x/pkg/core/payment"
 )
 
 const (
+	AggregationRoutingPolicyMessageType   = "AggregationRoutingPolicy"
 	FinalizedBlockReceiptMessageType      = "FinalizedBlockReceipt"
 	AggregationFinalizedMessageType       = "AggregationFinalized"
 	AggregationPackageMessageType         = "AggregationPackage"
@@ -17,6 +19,12 @@ const (
 	AggregationExecutionMetricMessageType = "AggregationExecutionMetric"
 	AggregationAppliedMessageType         = "AggregationApplied"
 )
+
+type AggregationRoutingPolicyMsg struct {
+	NodeID  int64
+	ShardID int64
+	Policy  routing.Policy
+}
 
 type FinalizedBlockReceiptMsg struct {
 	NodeID  int64

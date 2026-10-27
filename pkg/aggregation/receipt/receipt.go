@@ -232,6 +232,15 @@ func (p *Publisher) Publish(
 		return fmt.Errorf("build finalized block receipt: %w", err)
 	}
 
+	return p.PublishReceipt(ctx, finalized)
+}
+
+// PublishReceipt also sends empty routed receipts to retain continuous vector cuts.
+func (p *Publisher) PublishReceipt(ctx context.Context, finalized model.FinalizedBlockReceipt) error {
+	if !p.enabled || p.nodeID != 0 {
+		return nil
+	}
+
 	wrapped, err := message.WrapMsg(&message.FinalizedBlockReceiptMsg{
 		NodeID:  p.nodeID,
 		Receipt: finalized,
