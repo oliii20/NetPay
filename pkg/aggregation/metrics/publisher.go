@@ -30,6 +30,10 @@ func (p *Publisher) PublishBatch(ctx context.Context, metric model.AggregationBa
 	return p.publish(ctx, &message.AggregationBatchMetricMsg{NodeID: p.nodeID, Metric: metric})
 }
 
+func (p *Publisher) PublishQueue(ctx context.Context, metric model.AggregationQueueMetric) error {
+	return p.publish(ctx, &message.AggregationQueueMetricMsg{NodeID: p.nodeID, Metric: metric})
+}
+
 func (p *Publisher) PublishBeacon(ctx context.Context, metric model.AggregationBeaconMetric) error {
 	return p.publish(ctx, &message.AggregationBeaconMetricMsg{NodeID: p.nodeID, Metric: metric})
 }

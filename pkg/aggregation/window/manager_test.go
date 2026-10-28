@@ -128,6 +128,12 @@ func TestFrozenWaitExcludesCollectionAndActiveConsensus(t *testing.T) {
 	require.NoError(t, err)
 	clock.Advance(time.Second)
 	require.Equal(t, time.Second, manager.QueuedFrozenWait(clock.Now(), 1))
+	windows, originals := manager.QueuedWork(1)
+	require.Equal(t, 1, windows)
+	require.Equal(t, 1, originals)
+	windows, originals = manager.QueuedWork(0)
+	require.Equal(t, 2, windows)
+	require.Equal(t, 2, originals)
 }
 
 func TestManagerDisablesBatchSizeCloseWhenUnset(t *testing.T) {

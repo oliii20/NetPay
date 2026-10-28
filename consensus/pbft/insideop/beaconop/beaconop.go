@@ -32,6 +32,7 @@ var (
 )
 
 type Op struct {
+	service             serviceGate
 	routing             *routing.Controller
 	activeWindow        uint64
 	lastPolicyBroadcast time.Time
@@ -148,6 +149,27 @@ func (o *Op) BuildProposal(ctx context.Context) (*message.Proposal, error) {
 		return nil, nil
 	}
 
+	count := 0
+
+	for _, payment := range frozen.Payments {
+		if payment.SourceAggregated {
+			count += len(payment.OriginalIDs)
+		} else {
+			count++
+		}
+	}
+
+	o.activeWindow = frozen.WindowID
+
+	ready, err := o.service.ready(frozen.WindowID, count, o.cfg.ExperimentWorkUSPerPayment, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	if !ready {
+		return nil, nil
+	}
+
 	previous := merkle.Hash{}
 
 	if tip, found, err := o.store.Tip(); err != nil {
@@ -164,6 +186,9 @@ func (o *Op) BuildProposal(ctx context.Context) (*message.Proposal, error) {
 	}
 
 	metric.BuildTime = time.Since(buildStarted)
+	metric.ServiceStartedAt = o.service.startedAt
+	metric.ServiceQueueWait = max(time.Duration(0), o.service.startedAt.Sub(frozen.SealedAt))
+	metric.ExperimentServiceTime = o.service.delay
 
 	var (
 		ingressTotal, pendingTotal int64

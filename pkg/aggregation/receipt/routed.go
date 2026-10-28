@@ -44,8 +44,10 @@ func BuildRouted(shardID, epoch, chainID, shardCount int64, b *block.Block, comm
 
 		dest := partition.DefaultAccountLoc(tx.Recipient, shardCount)
 		if dest == shardID || partition.DefaultAccountLoc(tx.Sender, shardCount) != shardID ||
-			len(tx.ROriginalHash) != len(paymentmodel.ID{}) || tx.Value == nil || tx.Value.Sign() <= 0 {
-			return model.FinalizedBlockReceipt{}, nil, fmt.Errorf("invalid finalized Relay1 envelope")
+			len(tx.ROriginalHash) != len(paymentmodel.ID{}) || tx.Value == nil || tx.Value.Sign() < 0 {
+			return model.FinalizedBlockReceipt{}, nil, fmt.Errorf(
+				"invalid finalized Relay1 envelope: source=%d block=%d destination=%d original=%x value=%v",
+				shardID, b.Number, dest, tx.ROriginalHash, tx.Value)
 		}
 
 		var id paymentmodel.ID
@@ -56,6 +58,13 @@ func BuildRouted(shardID, epoch, chainID, shardCount int64, b *block.Block, comm
 		}
 
 		seen[id] = true
+		// Zero-value ordinary transactions are valid, but are not positive
+		// payments. Preserve their Relay2 delivery and source watermark without
+		// putting them into aggregation credits or the eligible-load statistics.
+		if tx.Value.Sign() == 0 {
+			relay = append(relay, tx)
+			continue
+		}
 
 		if stats[dest] == nil {
 			stats[dest] = &model.DestinationStat{ShardID: dest}

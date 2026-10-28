@@ -20,10 +20,12 @@ func (o *Op) updateRouting(ctx context.Context) error {
 
 	policy, changed := o.routing.Evaluate(now, wait)
 	if !changed {
-		policy = o.routing.Current()
-		if policy.Version == 0 || now.Sub(o.lastPolicyBroadcast) < time.Second {
+		version, _ := o.routing.PolicyState()
+		if version == 0 || now.Sub(o.lastPolicyBroadcast) < time.Second {
 			return nil
 		}
+
+		policy = o.routing.Current()
 	}
 
 	wrapped, err := message.WrapMsg(&message.AggregationRoutingPolicyMsg{
@@ -47,7 +49,10 @@ func (o *Op) updateRouting(ctx context.Context) error {
 
 	if changed {
 		slog.InfoContext(ctx, "adaptive aggregation routing changed", "version", policy.Version,
-			"reason", policy.Reason, "frozen_wait_ms", wait.Milliseconds(), "destinations", policy.Destinations)
+			"reason", policy.Reason, "frozen_wait_ms", wait.Milliseconds(), "destinations", policy.Destinations,
+			"recovery_baseline_payments", policy.RecoveryBaselinePayments,
+			"recovery_observed_payments", policy.RecoveryObservedPayments,
+			"recovery_change_percent", policy.RecoveryChangePercent)
 	}
 
 	return nil

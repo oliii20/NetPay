@@ -209,6 +209,29 @@ func (m *Manager) QueuedFrozenWait(now time.Time, activeWindow uint64) time.Dura
 	return 0
 }
 
+// QueuedWork excludes the window already receiving simulated service or PBFT.
+func (m *Manager) QueuedWork(activeWindow uint64) (int, int) {
+	windows, originals := 0, 0
+
+	for _, frozen := range m.frozen {
+		if frozen.WindowID == activeWindow {
+			continue
+		}
+
+		windows++
+
+		for _, p := range frozen.Payments {
+			if p.SourceAggregated {
+				originals += len(p.OriginalIDs)
+			} else {
+				originals++
+			}
+		}
+	}
+
+	return windows, originals
+}
+
 func (m *Manager) Watermark(shardID int64) (Watermark, error) {
 	stream, exists := m.streams[shardID]
 	if !exists {

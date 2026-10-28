@@ -64,6 +64,10 @@ func (s *StaticRelayCommittee) SendTxsAndConsensus(ctx context.Context) error {
 }
 
 func (s *StaticRelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.WrappedMsg) error {
+	if msg.GetMsgType() == message.AggregationQueueMetricMessageType {
+		return nil
+	}
+
 	if msg.GetMsgType() == message.AggregationRoutingPolicyMessageType {
 		return nil
 	}

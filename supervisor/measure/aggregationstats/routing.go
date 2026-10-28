@@ -33,11 +33,19 @@ func (c *Collector) writeRoutingPolicies() error {
 			strconv.FormatUint(p.Version, 10), strconv.FormatInt(p.IssuedAt.UnixNano(), 10),
 			p.Reason, strconv.FormatInt(p.FrozenWait.Nanoseconds(), 10), join(p.Destinations),
 			join(p.PaymentCount), join(p.RecipientCount),
+			strconv.FormatInt(p.RecoveryBaselinePayments, 10), strconv.FormatInt(p.RecoveryObservedPayments, 10),
+			strconv.FormatInt(
+				p.RecoveryWindowMS,
+				10,
+			), strconv.Itoa(p.RecoveryWindows), strconv.Itoa(p.RecoveryChangePercent),
 		})
 	}
 
 	if err := csvwrite.WriteAllToCSVReplace(filepath.Join(c.outputDir, RoutingMetricsFile),
-		[]string{"Version", "IssuedAtUnixNano", "Reason", "FrozenQueueWaitNs", "DestinationShards", "ObservedPaymentCounts", "ObservedRecipientCounts"}, rows); err != nil {
+		[]string{
+			"Version", "IssuedAtUnixNano", "Reason", "FrozenQueueWaitNs", "DestinationShards", "ObservedPaymentCounts", "ObservedRecipientCounts",
+			"RecoveryBaselinePayments", "RecoveryObservedPayments", "RecoveryWindowMs", "RecoveryWindows", "RecoveryChangePercent",
+		}, rows); err != nil {
 		return fmt.Errorf("write routing policies: %w", err)
 	}
 

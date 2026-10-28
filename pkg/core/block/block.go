@@ -40,6 +40,8 @@ var RecordTitle = []string{
 	"AggregationSettlementTxBytes",
 	"MigratedAccountsRoot",
 	"MigrationAccountLen",
+	"ZeroValueRelay1TxCount",
+	"ZeroValueRelay2TxCount",
 }
 
 type txRecordMetrics struct {
@@ -54,6 +56,8 @@ type txRecordMetrics struct {
 	brokerBytes      int
 	paymentBytes     int
 	aggregationBytes int
+	zeroRelay1Count  int
+	zeroRelay2Count  int
 }
 
 type Block struct {
@@ -125,6 +129,8 @@ func ConvertBlock2Line(b *Block) ([]string, error) {
 		strconv.Itoa(metrics.aggregationBytes),
 		hex.EncodeToString(b.MigratedAccountsRoot), // "MigratedAccountsRoot"
 		fmt.Sprintf("%d", len(b.MigratedAddrs)),    // "MigrationAccountLen"
+		strconv.Itoa(metrics.zeroRelay1Count),
+		strconv.Itoa(metrics.zeroRelay2Count),
 	}, nil
 }
 
@@ -149,8 +155,14 @@ func measureTransactions(txs []transaction.Transaction) (txRecordMetrics, error)
 			switch tx.RelayStage {
 			case transaction.Relay1Tx:
 				metrics.relay1Count++
+				if tx.Value != nil && tx.Value.Sign() == 0 {
+					metrics.zeroRelay1Count++
+				}
 			case transaction.Relay2Tx:
 				metrics.relay2Count++
+				if tx.Value != nil && tx.Value.Sign() == 0 {
+					metrics.zeroRelay2Count++
+				}
 			}
 		case transaction.BrokerTxType:
 			metrics.brokerBytes += size

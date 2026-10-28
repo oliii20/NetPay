@@ -80,8 +80,17 @@ func (r *RelayTxBlockOp) deliverAdaptive(ctx context.Context, b *block.Block, co
 	}
 
 	if len(records)+len(relay) > 0 {
+		zeroValueRelay := 0
+
+		for _, tx := range relay {
+			if tx.Value != nil && tx.Value.Sign() == 0 {
+				zeroValueRelay++
+			}
+		}
+
 		slog.InfoContext(ctx, "source block routed after commitment", "height", b.Number,
-			"routing_version", policy.Version, "aggregation_count", len(records), "relay_count", len(relay))
+			"routing_version", policy.Version, "aggregation_count", len(records), "relay_count", len(relay),
+			"zero_value_relay_count", zeroValueRelay)
 	}
 
 	return nil

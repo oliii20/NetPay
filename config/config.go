@@ -76,6 +76,10 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func validateAggregationConfig(cfg *Config) error {
+	if err := validateBeaconExperimentConfig(cfg); err != nil {
+		return err
+	}
+
 	if cfg.AdaptiveRouting.Enabled {
 		if err := validateAdaptiveRoutingConfig(cfg); err != nil {
 			return err

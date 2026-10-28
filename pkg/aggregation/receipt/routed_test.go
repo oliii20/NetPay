@@ -93,3 +93,60 @@ func TestAllRelayReceiptRetainsSourceWatermark(t *testing.T) {
 	require.Equal(t, b.Number, routed.Height)
 	require.Len(t, routed.DestinationStats, 2)
 }
+
+func TestZeroValueOriginalUsesRelayWithoutLosingPositivePayments(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		t.Run(map[bool]string{false: "individual", true: "compacted"}[compact], func(t *testing.T) {
+			b := sourceBlock(t)
+			b.TxList[0].Value = big.NewInt(0)
+			before, err := b.Hash()
+			require.NoError(t, err)
+			finalized, relay, err := receipt.BuildRouted(0, 0, 11, 4, b, time.Now(),
+				routing.Policy{Destinations: []int64{0, 1, 2, 3}}, compact)
+			require.NoError(t, err)
+			require.Len(t, relay, 1)
+			require.Equal(t, b.TxList[0], relay[0])
+			after, err := b.Hash()
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			var originals, eligible int
+			for _, payment := range finalized.Payments {
+				require.Positive(t, payment.Amount.Sign())
+				ids, err := payment.LogicalIDs()
+				require.NoError(t, err)
+				originals += len(ids)
+			}
+			for _, stat := range finalized.DestinationStats {
+				eligible += int(stat.PaymentCount)
+			}
+			require.Equal(t, 2, eligible)
+			require.Equal(t, 3, originals+len(relay))
+		})
+	}
+}
+
+func TestZeroOnlyReceiptKeepsSourceWatermark(t *testing.T) {
+	b := sourceBlock(t)
+	for i := range b.TxList {
+		b.TxList[i].Value = big.NewInt(0)
+	}
+	finalized, relay, err := receipt.BuildRouted(0, 0, 11, 4, b, time.Now(),
+		routing.Policy{Destinations: []int64{0, 1, 2, 3}}, true)
+	require.NoError(t, err)
+	require.Empty(t, finalized.Payments)
+	require.Empty(t, finalized.DestinationStats)
+	require.Len(t, relay, 3)
+	require.Equal(t, b.Number, finalized.Height)
+}
+
+func TestRoutedInvalidValuesRemainRejected(t *testing.T) {
+	for name, value := range map[string]*big.Int{"nil": nil, "negative": big.NewInt(-1)} {
+		t.Run(name, func(t *testing.T) {
+			b := sourceBlock(t)
+			b.TxList[0].Value = value
+			_, _, err := receipt.BuildRouted(0, 0, 11, 4, b, time.Now(),
+				routing.Policy{Destinations: []int64{1}}, true)
+			require.Error(t, err)
+		})
+	}
+}

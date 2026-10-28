@@ -20,6 +20,8 @@ func (r *Router) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 	switch wrapped.GetMsgType() {
 	case message.AggregationRoutingPolicyMessageType:
 		return r.aggregation.UpdateMeasureRecord(wrapped)
+	case message.AggregationQueueMetricMessageType:
+		return r.aggregation.UpdateMeasureRecord(wrapped)
 	case message.AggregationBatchMetricMessageType,
 		message.AggregationBeaconMetricMessageType,
 		message.AggregationExecutionMetricMessageType,

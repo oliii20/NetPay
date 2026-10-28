@@ -246,6 +246,12 @@ func (n *Node) run() {
 			n.advanceConsensus(ctx)
 		}
 
+		if observer, ok := n.iop.(interface{ ObserveLoop(context.Context) error }); ok {
+			if err := observer.ObserveLoop(ctx); err != nil {
+				slog.ErrorContext(ctx, "observe serial node loop failed", "err", err)
+			}
+		}
+
 		if n.pbftMeta.lp.NodeID == n.pbftMeta.leader {
 			// If this node is the leader and not proposed yet, try to propose one block.
 			if n.pbftMeta.stage == stagePreprepare && !n.pbftMeta.proposed {

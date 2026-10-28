@@ -56,6 +56,7 @@ func run() error {
 	total := flag.Int("count", 50, "broker count")
 	hot := flag.Int("hot", 5, "top active brokers")
 	seed := flag.Int64("seed", 1, "random selection seed")
+	positiveOnly := flag.Bool("positive-value-only", false, "select from the positive-payment workload prefix")
 	out := flag.String("output", "", "broker file")
 
 	flag.Parse()
@@ -64,7 +65,9 @@ func run() error {
 		return fmt.Errorf("positive tx-number and output required")
 	}
 
-	ds, err := csvsource.NewCSVSource(*dataset, true)
+	ds, err := csvsource.NewCSVSourceWithOptions(*dataset, csvsource.Options{
+		ExcludeContractTxs: true, PositiveValueOnly: *positiveOnly,
+	})
 	if err != nil {
 		return err
 	}
@@ -109,12 +112,13 @@ func run() error {
 	}
 
 	report := struct {
-		Dataset      string     `json:"dataset"`
-		Transactions int64      `json:"transactions"`
-		Seed         int64      `json:"seed"`
-		Candidates   int        `json:"candidates"`
-		Brokers      []activity `json:"brokers"`
-	}{*dataset, read, *seed, len(activityCounts), selected}
+		Dataset           string     `json:"dataset"`
+		Transactions      int64      `json:"transactions"`
+		Seed              int64      `json:"seed"`
+		Candidates        int        `json:"candidates"`
+		Brokers           []activity `json:"brokers"`
+		PositiveValueOnly bool       `json:"positive_value_only"`
+	}{*dataset, read, *seed, len(activityCounts), selected, *positiveOnly}
 
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {

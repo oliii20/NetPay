@@ -39,7 +39,9 @@ type ConsensusNodeCfg struct {
 }
 
 type AggregationCfg struct {
-	AdaptiveRouting routing.Config `json:"adaptive_routing"                      yaml:"adaptive_routing"`
+	// Experiment-only simulated Beacon service cost; zero preserves normal execution.
+	ExperimentWorkUSPerPayment int64          `json:"experiment_work_us_per_payment"        yaml:"experiment_work_us_per_payment"`
+	AdaptiveRouting            routing.Config `json:"adaptive_routing"                      yaml:"adaptive_routing"`
 	// nil aggregates every destination; a non-nil list is a fixed allowlist.
 	DestinationShards        []int64 `json:"destination_shards"                    yaml:"destination_shards"`
 	AggregationOnly          bool    `json:"aggregation_only"                      yaml:"aggregation_only"`
@@ -59,6 +61,7 @@ type TxSourceCfg struct {
 	TxSourceType       string `json:"tx_source_type"       yaml:"tx_source_type"`
 	TxSourceFile       string `json:"tx_source_file"       yaml:"tx_source_file"`
 	ExcludeContractTxs bool   `json:"exclude_contract_txs" yaml:"exclude_contract_txs"`
+	PositiveValueOnly  bool   `json:"positive_value_only"  yaml:"positive_value_only"`
 }
 
 type BrokerModuleCfg struct {

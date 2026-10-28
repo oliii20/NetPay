@@ -19,15 +19,18 @@ type Config struct {
 	CooldownMS            int64 `json:"cooldown_ms"             yaml:"cooldown_ms"`
 	ReductionPercent      int   `json:"reduction_percent"       yaml:"reduction_percent"`
 	MinDestinationPercent int   `json:"min_destination_percent" yaml:"min_destination_percent"`
+	RecoveryWindowMS      int64 `json:"recovery_window_ms"      yaml:"recovery_window_ms"`
+	RecoveryWindows       int   `json:"recovery_windows"        yaml:"recovery_windows"`
+	RecoveryChangePercent int   `json:"recovery_change_percent" yaml:"recovery_change_percent"`
 }
 
 func (c Config) WithDefaults() Config {
 	if c.FreezeHighMS == 0 {
-		c.FreezeHighMS = 2000
+		c.FreezeHighMS = 500
 	}
 
 	if c.FreezeLowMS == 0 {
-		c.FreezeLowMS = 500
+		c.FreezeLowMS = 100
 	}
 
 	if c.ObservationWindowMS == 0 {
@@ -46,6 +49,18 @@ func (c Config) WithDefaults() Config {
 		c.MinDestinationPercent = 25
 	}
 
+	if c.RecoveryWindowMS == 0 {
+		c.RecoveryWindowMS = 2000
+	}
+
+	if c.RecoveryWindows == 0 {
+		c.RecoveryWindows = 3
+	}
+
+	if c.RecoveryChangePercent == 0 {
+		c.RecoveryChangePercent = 75
+	}
+
 	return c
 }
 
@@ -53,7 +68,9 @@ func (c Config) Validate() error {
 	if c.FreezeLowMS < 0 || c.FreezeHighMS <= c.FreezeLowMS ||
 		c.ObservationWindowMS <= 0 || c.CooldownMS <= 0 ||
 		c.ReductionPercent < 1 || c.ReductionPercent > 100 ||
-		c.MinDestinationPercent < 1 || c.MinDestinationPercent > 100 {
+		c.MinDestinationPercent < 1 || c.MinDestinationPercent > 100 ||
+		c.RecoveryWindowMS <= 0 || c.RecoveryWindows < 1 || c.RecoveryWindows > 1000 ||
+		c.RecoveryChangePercent < 1 || c.RecoveryChangePercent > 100 {
 		return fmt.Errorf("invalid adaptive routing thresholds, durations or percentages")
 	}
 
@@ -61,13 +78,18 @@ func (c Config) Validate() error {
 }
 
 type Policy struct {
-	Version        uint64
-	Destinations   []int64
-	IssuedAt       time.Time
-	FrozenWait     time.Duration
-	Reason         string
-	PaymentCount   []int64
-	RecipientCount []int64
+	Version                  uint64
+	Destinations             []int64
+	IssuedAt                 time.Time
+	FrozenWait               time.Duration
+	Reason                   string
+	PaymentCount             []int64
+	RecipientCount           []int64
+	RecoveryBaselinePayments int64
+	RecoveryObservedPayments int64
+	RecoveryWindowMS         int64
+	RecoveryWindows          int
+	RecoveryChangePercent    int
 }
 
 func (p Policy) Clone() Policy {
@@ -138,16 +160,29 @@ type Controller struct {
 	table       *Table
 	lastHeight  map[int64]uint64
 	samples     []observation
+	sampleHead  int
+	counts      []int64
+	recipients  []int64
+	total       int64
 	lastChange  time.Time
 	lastHealthy time.Time
 	healthy     int
+	recovery    recoveryVolume
 }
 
 func NewController(shardCount int64, cfg Config) *Controller {
-	return &Controller{cfg: cfg.WithDefaults(), table: NewTable(shardCount), lastHeight: make(map[int64]uint64)}
+	return &Controller{
+		cfg: cfg.WithDefaults(), table: NewTable(shardCount), lastHeight: make(map[int64]uint64),
+		counts: make([]int64, shardCount), recipients: make([]int64, shardCount),
+	}
 }
 
 func (c *Controller) Current() Policy { return c.table.Snapshot() }
+
+// PolicyState exposes scalar status without allocating a full policy snapshot.
+func (c *Controller) PolicyState() (uint64, int) {
+	return c.table.policy.Version, len(c.table.policy.Destinations)
+}
 
 // Observe only uses received source-block summaries, including destinations currently
 // following Relay2. Repeated and older receipts cannot increase observed volume.
@@ -171,7 +206,19 @@ func (c *Controller) Observe(r model.FinalizedBlockReceipt, now time.Time) error
 	}
 
 	c.lastHeight[r.ShardID] = r.Height
-	c.samples = append(c.samples, observation{at: now, stats: slices.Clone(r.DestinationStats)})
+	stats := slices.Clone(r.DestinationStats)
+	c.samples = append(c.samples, observation{at: now, stats: stats})
+	c.recovery.advance(now, c.cfg)
+
+	for _, stat := range stats {
+		c.counts[stat.ShardID] += stat.PaymentCount
+		c.recipients[stat.ShardID] += stat.RecipientCount
+
+		c.total += stat.PaymentCount
+		if !c.recovery.windowStart.IsZero() {
+			c.recovery.pending += stat.PaymentCount
+		}
+	}
 
 	return nil
 }
@@ -179,27 +226,10 @@ func (c *Controller) Observe(r model.FinalizedBlockReceipt, now time.Time) error
 // Evaluate changes only future source-block delivery decisions. Frozen receipts
 // already in Beacon are never discarded or redirected by this control loop.
 func (c *Controller) Evaluate(now time.Time, frozenWait time.Duration) (Policy, bool) {
-	cutoff := now.Add(-time.Duration(c.cfg.ObservationWindowMS) * time.Millisecond)
+	c.recovery.advance(now, c.cfg)
+	c.expire(now)
 
-	first := 0
-	for first < len(c.samples) && c.samples[first].at.Before(cutoff) {
-		first++
-	}
-
-	c.samples = slices.Clone(c.samples[first:])
-	counts, recipients := make([]int64, c.table.shardCount), make([]int64, c.table.shardCount)
-
-	var total int64
-
-	for _, sample := range c.samples {
-		for _, s := range sample.stats {
-			counts[s.ShardID] += s.PaymentCount
-			recipients[s.ShardID] += s.RecipientCount
-			total += s.PaymentCount
-		}
-	}
-
-	if total == 0 {
+	if c.total == 0 {
 		c.healthy = 0
 		return Policy{}, false
 	}
@@ -218,20 +248,21 @@ func (c *Controller) Evaluate(now time.Time, frozenWait time.Duration) (Policy, 
 		return Policy{}, false
 	}
 
-	current := c.Current()
+	current := c.table.policy
 	step := max(1, (int(c.table.shardCount)*c.cfg.ReductionPercent+99)/100)
 	minimum := max(1, (int(c.table.shardCount)*c.cfg.MinDestinationPercent+99)/100)
 
 	size, reason := len(current.Destinations), ""
 	if frozenWait > time.Duration(c.cfg.FreezeHighMS)*time.Millisecond && size > minimum {
 		size, reason = max(minimum, size-step), "frozen_queue_overload"
-	} else if c.healthy >= 3 && size < int(c.table.shardCount) {
+	} else if c.healthy >= 3 && size < int(c.table.shardCount) && c.recovery.changed(c.cfg) {
 		size, reason = min(int(c.table.shardCount), size+step), "frozen_queue_recovered"
 	} else {
 		return Policy{}, false
 	}
 	// Rank a conservative block-local account-update saving fraction. No unseen
 	// dataset suffix or offline destination ranking is available here.
+	counts, recipients := c.counts, c.recipients
 	less := func(a, b int64) bool {
 		score := func(id int64) float64 {
 			if counts[id] == 0 {
@@ -268,9 +299,19 @@ func (c *Controller) Evaluate(now time.Time, frozenWait time.Duration) (Policy, 
 	}
 
 	slices.Sort(candidates)
+
 	p := Policy{
 		Version: current.Version + 1, Destinations: candidates, IssuedAt: now, FrozenWait: frozenWait,
-		Reason: reason, PaymentCount: counts, RecipientCount: recipients,
+		Reason: reason, PaymentCount: slices.Clone(counts), RecipientCount: slices.Clone(recipients),
+		RecoveryBaselinePayments: c.recovery.baseline,
+		RecoveryObservedPayments: c.recovery.recentTotal(),
+		RecoveryWindowMS:         c.cfg.RecoveryWindowMS, RecoveryWindows: c.cfg.RecoveryWindows,
+		RecoveryChangePercent: c.cfg.RecoveryChangePercent,
+	}
+	if reason == "frozen_queue_overload" && len(current.Destinations) == int(c.table.shardCount) {
+		c.recovery = recoveryVolume{windowStart: now}
+	} else if size == int(c.table.shardCount) {
+		c.recovery = recoveryVolume{}
 	}
 	// The generated policy is canonical by construction.
 	c.table.policy = p.Clone()

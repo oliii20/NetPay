@@ -19,6 +19,9 @@ type ShardWindowMetric struct {
 }
 
 type AggregationBatchMetric struct {
+	ServiceStartedAt        time.Time
+	ServiceQueueWait        time.Duration
+	ExperimentServiceTime   time.Duration
 	ReceiptTimingCount      int64
 	SourceToHandlerMean     time.Duration
 	HandlerToBuildMean      time.Duration
@@ -49,6 +52,19 @@ type AggregationBatchMetric struct {
 	BatchProposalBytes      int
 	SidecarBytes            int
 	BuiltAt                 time.Time
+}
+
+// AggregationQueueMetric samples the leader queue even while service/PBFT is busy.
+type AggregationQueueMetric struct {
+	ObservedAt              time.Time
+	FrozenWindows           int
+	QueuedWindows           int
+	PendingPayments         int
+	QueuedOriginals         int
+	FrozenQueueWait         time.Duration
+	ActiveWindowID          uint64
+	PolicyVersion           uint64
+	AggregationDestinations int
 }
 
 type AggregationBeaconMetric struct {

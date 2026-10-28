@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	AggregationQueueMetricMessageType     = "AggregationQueueMetric"
 	AggregationRoutingPolicyMessageType   = "AggregationRoutingPolicy"
 	FinalizedBlockReceiptMessageType      = "FinalizedBlockReceipt"
 	AggregationFinalizedMessageType       = "AggregationFinalized"
@@ -19,6 +20,11 @@ const (
 	AggregationExecutionMetricMessageType = "AggregationExecutionMetric"
 	AggregationAppliedMessageType         = "AggregationApplied"
 )
+
+type AggregationQueueMetricMsg struct {
+	NodeID int64
+	Metric model.AggregationQueueMetric
+}
 
 type AggregationRoutingPolicyMsg struct {
 	NodeID  int64

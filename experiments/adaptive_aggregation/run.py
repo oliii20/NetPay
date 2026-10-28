@@ -1,156 +1,208 @@
 #!/usr/bin/env python3
-"""Run and audit adaptive post-commit routing (24 shards by default)."""
-
+"""Run one isolated, audited experiment using normal source transactions."""
 import argparse
-import csv
 import json
 from pathlib import Path
-import re
-import socket
-import subprocess
 import time
-
 import yaml
+from common import (
+    ROOT,
+    BEACON,
+    MODES,
+    PROPOSED,
+    build_binaries,
+    network_table,
+    launch_and_wait,
+    provenance,
+    sha256_file,
+    validate_and_summarize,
+    write_json,
+)
 
 
-ROOT = Path(__file__).resolve().parents[2]
-BEACON, SUPERVISOR = 2147483646, 2147483647
+def parser():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--mode", choices=MODES, default="adaptive")
+    p.add_argument("--shards", type=int, default=24)
+    p.add_argument("--tx-number", type=int, default=300000)
+    p.add_argument("--per-shard-rate", type=int, default=600)
+    p.add_argument("--freeze-high-ms", type=int, default=500)
+    p.add_argument("--freeze-low-ms", type=int, default=100)
+    p.add_argument("--cooldown-ms", type=int, default=10000)
+    p.add_argument("--recovery-window-ms", type=int, default=2000)
+    p.add_argument("--recovery-windows", type=int, default=3)
+    p.add_argument("--recovery-change-percent", type=int, default=75)
+    p.add_argument("--min-destination-percent", type=int, default=25)
+    p.add_argument("--beacon-work-us", type=int, default=0)
+    p.add_argument("--block-interval-ms", type=int, default=2000)
+    p.add_argument("--beacon-interval-ms", type=int, default=1000)
+    p.add_argument("--window-ms", type=int, default=2000)
+    p.add_argument("--block-limit", type=int, default=2000)
+    p.add_argument("--clpa-interval", type=int, default=20)
+    p.add_argument("--timeout", type=int, default=1800)
+    p.add_argument("--port-base", type=int, default=42000)
+    p.add_argument(
+        "--dataset",
+        type=Path,
+        default=ROOT / "data/25250000to25499999_BlockTransaction.csv",
+    )
+    p.add_argument("--broker-file", type=Path, default=ROOT / "pkg/broker/broker")
+    p.add_argument("--bins", type=Path)
+    p.add_argument("--output", type=Path)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument(
+        "--pressure-test",
+        action="store_true",
+        help="compatibility smoke preset; not a benchmark",
+    )
+    return p
 
 
-def rows(path):
-    with path.open(newline="") as handle:
-        return list(csv.DictReader(handle))
+def make_config(a, output):
+    proposed = a.mode in PROPOSED
+    c = yaml.safe_load((ROOT / "config.aggregation-e2e.yaml").read_text())
+    c["system"].update(
+        shard_num=a.shards,
+        node_num=4,
+        limit=a.block_limit,
+        consensus_type={"brokerchain": "static_broker", "clpa": "clpa_relay"}.get(
+            a.mode, "static_relay"
+        ),
+    )
+    c["system"]["log"]["log_dir"] = str(output / "logs")
+    n = c["consensus_node"]
+    n.update(
+        block_interval=a.block_interval_ms,
+        block_record_dir=str(output / "block_record"),
+        shard_block_intervals_ms={BEACON: a.beacon_interval_ms} if proposed else {},
+    )
+    n["blockchain"]["storage"]["bolt"]["file_path_dir"] = str(output / "boltdb")
+    n["blockchain"]["storage"]["eth_storage"]["level_file_path_dir"] = str(
+        output / "trie_db"
+    )
+    n["blockchain"]["vm"]["vm_state_dir"] = str(output / "vm_state")
+    c["aggregation"].update(
+        enabled=proposed,
+        metrics_enabled=proposed,
+        source_aggregate_abstracts=True,
+        credit_chunk_size=512,
+        batch_size=0,
+        max_window_duration_ms=a.window_ms,
+        beacon_store_path=str(output / "beacon/beacon.db"),
+        experiment_work_us_per_payment=a.beacon_work_us if proposed else 0,
+        adaptive_routing=dict(
+            enabled=proposed,
+            freeze_high_ms=a.freeze_high_ms,
+            freeze_low_ms=a.freeze_low_ms,
+            observation_window_ms=10000,
+            cooldown_ms=a.cooldown_ms,
+            reduction_percent=25,
+            min_destination_percent=100
+            if a.mode == "full"
+            else a.min_destination_percent,
+            recovery_window_ms=getattr(a, "recovery_window_ms", 2000),
+            recovery_windows=getattr(a, "recovery_windows", 3),
+            recovery_change_percent=getattr(a, "recovery_change_percent", 75),
+        ),
+    )
+    c["supervisor"].update(
+        tx_number=a.tx_number,
+        tx_injection_speed=a.shards * a.per_shard_rate,
+        result_output_dir=str(output / "results"),
+        epoch_duration=a.clpa_interval,
+    )
+    c["supervisor"]["tx_source"].update(
+        tx_source_type="csv_source",
+        tx_source_file=str(a.dataset.resolve()),
+        exclude_contract_txs=True,
+        positive_value_only=True,
+    )
+    c["supervisor"]["broker_module"]["broker_file_path"] = str(a.broker_file.resolve())
+    return c
 
 
-def audit(output, expected, pressure):
-    ordinary = rows(output / "results/relay_stats_detail_tx_info.csv")
-    aggregated = rows(output / "results/aggregation_tx_lifecycle.csv")
-    ids = [r["OriginalHash"] for r in ordinary] + [r["PaymentID"] for r in aggregated]
-    if len(ids) != expected or len(set(ids)) != expected:
-        raise ValueError(f"not exactly {expected} unique completed originals: rows={len(ids)}, unique={len(set(ids))}")
-    policies = rows(output / "results/aggregation_routing_policy.csv")
-    if pressure and (not policies or not aggregated or not any(r["Is cross-shard tx or not"] == "true" for r in ordinary)):
-        raise ValueError("pressure run did not exercise both routes and a policy change")
-    totals = {key: 0 for key in ("Relay1TxCount", "Relay2TxCount", "CrossShardPaymentTxCount", "AggregationSettlementTxCount")}
-    for path in (output / "block_record").glob("shard=*_node=0/block_record.csv"):
-        for row in rows(path):
-            for key in totals:
-                totals[key] += int(row[key])
-    if totals["CrossShardPaymentTxCount"] != 0:
-        raise ValueError("adaptive injection changed the original transaction type")
-    if totals["Relay1TxCount"] != totals["Relay2TxCount"] + len(aggregated):
-        raise ValueError("source Relay1 partition does not conserve original transactions")
-    errors = []
-    for folder in ("logs", "process_logs"):
-        for path in (output / folder).rglob("*.log"):
-            for line in path.read_text(errors="replace").splitlines():
-                if re.search(r"level=(ERROR|WARN)", line):
-                    errors.append(f"{path.relative_to(output)}: {line}")
-    if errors:
-        raise ValueError("experiment warnings/errors:\n" + "\n".join(errors[:10]))
-    report = dict(expected=expected, completed_originals=len(ids), duplicate_originals=len(ids)-len(set(ids)),
-                  aggregation_originals=len(aggregated), relay_and_inner_originals=len(ordinary),
-                  policy_versions=len(policies), block_counters=totals, warning_error_count=0)
-    (output / "validation.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps(report, indent=2), flush=True)
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--shards", type=int, default=24)
-    parser.add_argument("--tx-number", type=int, default=300000)
-    parser.add_argument("--per-shard-rate", type=int, default=600)
-    parser.add_argument("--pressure-test", action="store_true", help="small-batch integration test; not a performance benchmark")
-    parser.add_argument("--timeout", type=int, default=600)
-    parser.add_argument("--output", type=Path)
-    args = parser.parse_args()
-    if args.shards < 2 or args.tx_number <= 0 or args.per_shard_rate <= 0:
-        parser.error("shards >= 2 and positive workload/rate required")
-    output = args.output or ROOT / f".exp/adaptive-routing-{time.strftime('%Y%m%d-%H%M%S')}"
-    output = output.resolve()
+def execute(a, shared=None):
+    if (
+        a.shards < 2
+        or min(
+            a.tx_number,
+            a.per_shard_rate,
+            a.block_limit,
+            a.window_ms,
+            a.cooldown_ms,
+            a.block_interval_ms,
+            a.beacon_interval_ms,
+            a.clpa_interval,
+            a.timeout,
+            getattr(a, "recovery_window_ms", 2000),
+            getattr(a, "recovery_windows", 3),
+        )
+        <= 0
+    ):
+        raise ValueError(
+            "positive workload, rate, limits and intervals required; shards >= 2"
+        )
+    if not 0 < a.freeze_low_ms < a.freeze_high_ms or a.beacon_work_us < 0:
+        raise ValueError(
+            "require 0 < freeze-low-ms < freeze-high-ms and nonnegative beacon work"
+        )
+    if (
+        not 1 <= a.min_destination_percent <= 100
+        or not 1024 <= a.port_base <= 65000 - a.shards * 4
+    ):
+        raise ValueError("invalid minimum destination percentage or port range")
+    if (
+        not 1 <= getattr(a, "recovery_change_percent", 75) <= 100
+        or getattr(a, "recovery_windows", 3) > 1000
+    ):
+        raise ValueError("invalid recovery percentage or window count")
+    if a.pressure_test:
+        a.block_limit = 100
+        a.block_interval_ms = a.beacon_interval_ms = a.window_ms = 500
+        a.cooldown_ms = 2000
+        a.beacon_work_us = a.beacon_work_us or 8000
+    output = (
+        a.output or ROOT / f"exp/{a.mode}-{a.shards}-{time.strftime('%Y%m%d-%H%M%S')}"
+    ).resolve()
     output.mkdir(parents=True, exist_ok=False)
-    config = yaml.safe_load((ROOT / "config.aggregation-e2e.yaml").read_text())
-    config["system"].update(shard_num=args.shards, node_num=4, limit=100 if args.pressure_test else 2000)
-    config["system"]["log"]["log_dir"] = str(output / "logs")
-    node = config["consensus_node"]
-    node["block_interval"] = 500 if args.pressure_test else 2000
-    node["shard_block_intervals_ms"] = {BEACON: 500 if args.pressure_test else 1000}
-    node["block_record_dir"] = str(output / "block_record")
-    node["blockchain"]["storage"]["bolt"]["file_path_dir"] = str(output / "boltdb")
-    node["blockchain"]["storage"]["eth_storage"]["level_file_path_dir"] = str(output / "trie_db")
-    node["blockchain"]["vm"]["vm_state_dir"] = str(output / "vm_state")
-    config["aggregation"].update(source_aggregate_abstracts=True, credit_chunk_size=512,
-                                 batch_size=20 if args.pressure_test else 0,
-                                 max_window_duration_ms=500 if args.pressure_test else 2000,
-                                 beacon_store_path=str(output / "beacon/beacon.db"),
-                                 adaptive_routing=dict(enabled=True, freeze_high_ms=100 if args.pressure_test else 2000,
-                                                       freeze_low_ms=25 if args.pressure_test else 500,
-                                                       observation_window_ms=10000, cooldown_ms=2000 if args.pressure_test else 10000,
-                                                       reduction_percent=25, min_destination_percent=25))
-    config["supervisor"].update(tx_number=args.tx_number, tx_injection_speed=args.shards*args.per_shard_rate,
-                                 result_output_dir=str(output / "results"))
-    config["supervisor"]["tx_source"].update(tx_source_type="csv_source", tx_source_file="./data/25250000to25499999_BlockTransaction.csv")
-    config_path, table_path = output / "config.yaml", output / "ip_table.json"
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
-    # Only validate/reserve addresses for this experiment. Existing process groups
-    # and prior results are never killed or overwritten.
-    sockets, table, port = [], {}, 42000
+    config = make_config(a, output)
+    table = network_table(a.shards, a.mode in PROPOSED, a.port_base)
+    (output / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
+    write_json(output / "ip_table.json", table)
+    if a.dry_run:
+        write_json(
+            output / "manifest.json",
+            dict(
+                settings={
+                    k: str(v) if isinstance(v, Path) else v for k, v in vars(a).items()
+                },
+                dry_run=True,
+            ),
+        )
+        return None
+    bins = a.bins.resolve() if a.bins else build_binaries(output / "bin")
+    write_json(
+        output / "manifest.json",
+        dict(
+            shared or provenance(a.dataset, bins),
+            config_sha256=sha256_file(output / "config.yaml"),
+            settings={
+                k: str(v) if isinstance(v, Path) else v for k, v in vars(a).items()
+            },
+        ),
+    )
+    print(f"Starting {a.mode} {a.shards}x4; output: {output}", flush=True)
     try:
-        for shard in list(range(args.shards)) + [BEACON, SUPERVISOR]:
-            table[str(shard)] = {}
-            for node_id in range(1 if shard == SUPERVISOR else 4):
-                sock = socket.socket()
-                sock.bind(("127.0.0.1", port))
-                sockets.append(sock)
-                table[str(shard)][str(node_id)] = f"127.0.0.1:{port}"
-                port += 1
-    finally:
-        for sock in sockets:
-            sock.close()
-    table_path.write_text(json.dumps(table, indent=2) + "\n")
-    bins, logs = output / "bin", output / "process_logs"
-    bins.mkdir(); logs.mkdir()
-    for command in ("consensusnode", "beaconnode", "supervisor"):
-        subprocess.run(["go", "build", "-o", str(bins / command), f"./cmd/{command}"], cwd=ROOT, check=True)
-    processes, handles = [], []
-    def launch(binary, shard, node_id):
-        handle = (logs / f"{binary}-{shard}-{node_id}.log").open("w")
-        handles.append(handle)
-        process = subprocess.Popen([str(bins / binary), f"-config={config_path}", f"-ip_table={table_path}",
-                                    f"-shard_id={shard}", f"-node_id={node_id}"], cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT)
-        processes.append(process)
-        return process
-    print(f"Starting {args.shards}x4 + 4 Beacon replicas; output: {output}", flush=True)
-    try:
-        for shard in range(args.shards):
-            for node_id in range(4):
-                launch("consensusnode", shard, node_id)
-        for node_id in range(4):
-            launch("beaconnode", BEACON, node_id)
-        supervisor = launch("supervisor", SUPERVISOR, 0)
-        deadline = time.monotonic() + args.timeout
-        while supervisor.poll() is None:
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"experiment did not finish; inspect {logs}")
-            for process in processes[:-1]:
-                if process.poll() not in (None, 0):
-                    raise RuntimeError(f"node exited with {process.returncode}; inspect {logs}")
-            time.sleep(.5)
-        if supervisor.returncode:
-            raise RuntimeError(f"supervisor failed; inspect {logs}")
-        audit(output, args.tx_number, args.pressure_test)
-    finally:
-        for process in processes:
-            if process.poll() is None:
-                process.terminate()
-        for process in processes:
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill(); process.wait()
-        for handle in handles:
-            handle.close()
+        launch_and_wait(output, config, table, bins, a.timeout, a.port_base)
+        result = validate_and_summarize(
+            output, a.mode, a.tx_number, a.pressure_test and a.mode == "adaptive"
+        )
+        print(json.dumps(result, indent=2), flush=True)
+        return result
+    except Exception as error:
+        write_json(output / "failure.json", dict(error=str(error)))
+        raise
 
 
 if __name__ == "__main__":
-    main()
+    execute(parser().parse_args())

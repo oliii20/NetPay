@@ -27,6 +27,7 @@ const (
 	ExecutionMetricsFile = "aggregation_execution_metrics.csv"
 	LifecycleMetricsFile = "aggregation_tx_lifecycle.csv"
 	RoutingMetricsFile   = "aggregation_routing_policy.csv"
+	QueueMetricsFile     = "aggregation_queue_timeseries.csv"
 )
 
 var batchHeaders = []string{
@@ -39,6 +40,7 @@ var batchHeaders = []string{
 	"FrozenQueueWaitNs", "BuildTimeNs", "LocalValidationTimeNs", "FrozenWindowQueueLength",
 	"ReceiptTimingCount", "SourceToHandlerMeanNs", "HandlerToBuildMeanNs",
 	"SupervisorNotifyTimeNs", "HeaderBroadcastTimeNs", "PackageDispatchTimeNs", "CommitDeliveryTimeNs",
+	"ServiceStartedAtUnixNano", "ServiceQueueWaitNs", "ExperimentServiceTimeNs",
 }
 
 var executionHeaders = []string{
@@ -58,6 +60,7 @@ type batchRecord struct {
 }
 
 type Collector struct {
+	queueSamples         map[int64]model.AggregationQueueMetric
 	routingPolicies      map[uint64]routing.Policy
 	outputDir            string
 	mu                   sync.Mutex
@@ -76,6 +79,7 @@ type Collector struct {
 
 func New(outputDir string) *Collector {
 	return &Collector{
+		queueSamples:         make(map[int64]model.AggregationQueueMetric),
 		routingPolicies:      make(map[uint64]routing.Policy),
 		outputDir:            outputDir,
 		paymentSettlements:   make(map[merkle.Hash][]message.PaymentSettlement),
@@ -96,6 +100,17 @@ func (c *Collector) UpdateMeasureRecord(wrapped *rpcserver.WrappedMsg) error {
 	defer c.mu.Unlock()
 
 	switch wrapped.GetMsgType() {
+	case message.AggregationQueueMetricMessageType:
+		var msg message.AggregationQueueMetricMsg
+		if err := decode(wrapped, &msg); err != nil {
+			return err
+		}
+
+		if msg.NodeID != 0 {
+			return fmt.Errorf("queue metric not from Beacon leader")
+		}
+
+		c.queueSamples[msg.Metric.ObservedAt.UnixNano()] = msg.Metric
 	case message.AggregationRoutingPolicyMessageType:
 		var msg message.AggregationRoutingPolicyMsg
 		if err := decode(wrapped, &msg); err != nil {
@@ -220,6 +235,10 @@ func (c *Collector) OutputResultAndClose() error {
 		return err
 	}
 
+	if err := c.writeQueueSamples(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -317,6 +336,9 @@ func (c *Collector) batchRows() [][]string {
 				beacon.PackageDispatchTime.Nanoseconds(),
 				10,
 			), strconv.FormatInt(beacon.CommitDeliveryTime.Nanoseconds(), 10),
+			strconv.FormatInt(batch.ServiceStartedAt.UnixNano(), 10),
+			strconv.FormatInt(batch.ServiceQueueWait.Nanoseconds(), 10),
+			strconv.FormatInt(batch.ExperimentServiceTime.Nanoseconds(), 10),
 		})
 	}
 

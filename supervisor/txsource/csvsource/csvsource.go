@@ -18,6 +18,11 @@ import (
 
 const Key = "csv_source"
 
+type Options struct {
+	ExcludeContractTxs bool
+	PositiveValueOnly  bool
+}
+
 // CSVSource implements TxSourceType.
 // The csv file format supported by this implementation is like those from XBlock (https://xblock.pro/xblock-eth.html).
 type CSVSource struct {
@@ -26,9 +31,14 @@ type CSVSource struct {
 	file               *os.File
 	done               bool
 	excludeContractTxs bool
+	positiveValueOnly  bool
 }
 
 func NewCSVSource(filename string, excludeContractTxs bool) (*CSVSource, error) {
+	return NewCSVSourceWithOptions(filename, Options{ExcludeContractTxs: excludeContractTxs})
+}
+
+func NewCSVSourceWithOptions(filename string, options Options) (*CSVSource, error) {
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open dataset file: %w", err)
@@ -46,7 +56,8 @@ func NewCSVSource(filename string, excludeContractTxs bool) (*CSVSource, error) 
 		count:              1,
 		cr:                 r,
 		file:               f,
-		excludeContractTxs: excludeContractTxs,
+		excludeContractTxs: options.ExcludeContractTxs,
+		positiveValueOnly:  options.PositiveValueOnly,
 	}, nil
 }
 
@@ -71,6 +82,10 @@ func (ds *CSVSource) ReadTxs(size int64) ([]transaction.Transaction, error) {
 		tx, err := line2Tx(txLine, ds.count, ds.excludeContractTxs)
 		if err != nil {
 			slog.Debug("line2Tx failed", "line", txLine, "err", err)
+			continue
+		}
+
+		if ds.positiveValueOnly && tx.Value.Sign() <= 0 {
 			continue
 		}
 

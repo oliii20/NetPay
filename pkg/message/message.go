@@ -45,6 +45,8 @@ func getMsgType(msg any) (string, error) {
 	var msgType string
 
 	switch msg.(type) {
+	case *AggregationQueueMetricMsg, AggregationQueueMetricMsg:
+		msgType = AggregationQueueMetricMessageType
 	case *AggregationRoutingPolicyMsg, AggregationRoutingPolicyMsg:
 		msgType = AggregationRoutingPolicyMessageType
 	case *StopConsensusMsg, StopConsensusMsg:

@@ -8,6 +8,11 @@
 expTest
 exp
 exp
+.exp/
+
+# Generated experiment figures and cached samples stay local.
+figures/newcode-scaling-*/
+figures/aggregation-diagnostics-full-plus-24-hot75/shard8_latency_samples.npz
 
 # 不要上传可执行文件！
 # Do not upload your executable files!
