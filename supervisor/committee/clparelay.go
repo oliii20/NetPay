@@ -63,6 +63,10 @@ func NewCLPARelayCommittee(
 }
 
 func (c *CLPARelayCommittee) SendTxsAndConsensus(ctx context.Context) error {
+	if c.ShouldStop() {
+		return nil
+	}
+
 	// if the repartition procedure between consensus nodes is not over, wait for it and return
 	// This function should not be blocked.
 	if !c.CheckEpochSyncAndMark() {
@@ -125,7 +129,9 @@ func (c *CLPARelayCommittee) HandleMsg(_ context.Context, msg *rpcserver.Wrapped
 }
 
 func (c *CLPARelayCommittee) ShouldStop() bool {
-	return c.sl.stopCnt >= c.sl.stopThreshold
+	// Empty blocks can arrive while other shards are still migrating.
+	// Finish that round before any shard is allowed to shut down.
+	return c.unsentTxNum <= 0 && c.sl.stopCnt >= c.sl.stopThreshold && c.CheckEpochSyncAndMark()
 }
 
 //nolint:dupl // Relay and broker committees intentionally keep independent CLPA state transitions.

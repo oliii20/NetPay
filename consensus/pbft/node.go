@@ -218,6 +218,10 @@ func (n *Node) run() {
 
 		// Fetch messages from buffer to pool.
 		msgList := n.conn.DrainMsgBuffer()
+		if n.stopRequested(ctx, msgList) {
+			break
+		}
+
 		preprepareMsgs := make([]*rpcserver.WrappedMsg, 0)
 
 		for _, msg := range msgList {
@@ -272,6 +276,23 @@ func (n *Node) run() {
 	}
 
 	n.closeAll()
+}
+
+// stopRequested gives shutdown priority over all work in the drained batch.
+// In particular, a queued CLPA start must not trigger migration sends after
+// peers have already consumed their stop messages and closed connections.
+func (n *Node) stopRequested(ctx context.Context, msgs []*rpcserver.WrappedMsg) bool {
+	for _, msg := range msgs {
+		if msg.GetMsgType() == message.StopConsensusMessageType {
+			if err := n.handleStopConsensus(ctx, msg.GetPayload()); err != nil {
+				slog.ErrorContext(ctx, "handle stop consensus failed", "err", err)
+			}
+
+			return true
+		}
+	}
+
+	return false
 }
 
 func (n *Node) advanceConsensus(ctx context.Context) {

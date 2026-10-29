@@ -141,6 +141,12 @@ func (s *Supervisor) Start() error {
 			}
 		}
 
+		// The drained block reports may have completed the workload. Do not
+		// start another CLPA round before checking the stop condition again.
+		if s.committee.ShouldStop() {
+			break
+		}
+
 		if err := s.committee.SendTxsAndConsensus(ctx); err != nil {
 			slog.ErrorContext(ctx, "failed to send txs and consensus messages", "err", err)
 		}
